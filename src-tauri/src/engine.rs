@@ -279,6 +279,13 @@ pub struct Stats {
 /// Plain text of a ProseMirror JSON document (for titles and search).
 pub fn doc_text(doc_json: &str) -> String {
     fn walk(v: &Value, out: &mut String) {
+        if matches!(v.get("type").and_then(Value::as_str), Some("htmlBlock") | Some("htmlInline")) {
+            if let Some(h) = v.pointer("/attrs/html").and_then(Value::as_str) {
+                out.push_str(&crate::sentence::html_to_text(h).replace('\n', " "));
+                out.push(' ');
+            }
+            return;
+        }
         if v.get("type").and_then(Value::as_str) == Some("text") {
             if let Some(t) = v.get("text").and_then(Value::as_str) {
                 out.push_str(t);

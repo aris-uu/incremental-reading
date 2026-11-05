@@ -490,6 +490,18 @@ fn pending_sentences(state: State<AppState>) -> Result<Vec<(i64, serde_json::Map
     with(&state, sentence::pending)
 }
 
+/// Rebuild mined cards from their fields (all, or the given ones); undoable.
+#[tauri::command]
+fn requeue_mined(state: State<AppState>, ids: Option<Vec<i64>>) -> Result<usize> {
+    let wanted = ids.clone();
+    undoable(
+        &state,
+        "Rebuild mined cards",
+        move |c| Ok(sentence::all(c)?.into_iter().map(|x| x.0).filter(|id| wanted.as_ref().is_none_or(|w| w.contains(id))).collect()),
+        |c| sentence::requeue(c, ids.as_deref()),
+    )
+}
+
 #[tauri::command]
 fn rendered_sentence(state: State<AppState>, id: i64, question: String, answer: String) -> Result<()> {
     with(&state, |c| sentence::rendered(c, id, &question, &answer))
@@ -692,6 +704,7 @@ pub fn run() {
             append_lines,
             create_sentence,
             pending_sentences,
+            requeue_mined,
             rendered_sentence,
             ensure_deck,
             save_media,

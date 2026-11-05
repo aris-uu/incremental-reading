@@ -225,6 +225,21 @@ pub fn update(conn: &Connection, id: i64, patch: &Map<String, Value>) -> Result<
     engine::touch_pub(conn, id)
 }
 
+/// Queue mined cards to be rebuilt from their fields (all, or these).
+/// Their edits are replaced. Returns how many.
+pub fn requeue(conn: &Connection, ids: Option<&[i64]>) -> Result<usize> {
+    let mut n = 0;
+    for (id, mut f, _) in all(conn)? {
+        if ids.is_some_and(|w| !w.contains(&id)) {
+            continue;
+        }
+        f.insert("_pending".into(), json!("all"));
+        conn.execute("UPDATE item SET fields_json=?2 WHERE element_id=?1", params![id, Value::Object(f).to_string()]).map_err(e)?;
+        n += 1;
+    }
+    Ok(n)
+}
+
 /// Mined cards waiting for the UI to render them: (id, fields).
 pub fn pending(conn: &Connection) -> Result<Vec<(i64, Map<String, Value>)>> {
     Ok(all(conn)?.into_iter().filter(|(_, f, _)| f.contains_key("_pending")).map(|(id, f, _)| (id, f)).collect())

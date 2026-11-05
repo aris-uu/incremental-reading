@@ -22,6 +22,12 @@ export function ankiHtml(docJson: string): string {
   }
   for (const el of root.querySelectorAll("[data-occlusion]")) el.removeAttribute("data-occlusion");
   for (const el of root.querySelectorAll("[data-sound]")) el.replaceWith(document.createTextNode(`[sound:${el.getAttribute("data-sound")}]`));
+  for (const el of root.querySelectorAll("[data-html-block], [data-html-inline]")) {
+    const wrap = document.createElement(el.tagName === "DIV" ? "div" : "span");
+    wrap.className = `ir-html ${el.getAttribute("data-html-block") ?? el.getAttribute("data-html-inline") ?? ""}`;
+    wrap.innerHTML = el.getAttribute("data-html") ?? "";
+    el.replaceWith(wrap);
+  }
   return root.innerHTML;
 }
 

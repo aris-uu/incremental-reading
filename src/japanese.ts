@@ -3,6 +3,7 @@ import { ASSET_BASE } from "./editor/assetSrc";
 import { loadPrefs } from "./prefs";
 import { generateJSON } from "@tiptap/react";
 import { fieldExtensions } from "./editor/extensions";
+import { sanitizeHtml } from "./editor/sanitize";
 
 /** Field values of a sentence item (Senren field names). */
 export type Fields = Record<string, string>;
@@ -107,27 +108,7 @@ const BAD_TAGS = "script,iframe,object,embed,link,meta,base,form,input,button,te
  * server; `[sound:x]` turned into play buttons.
  */
 export function renderField(html: string): string {
-  const withSounds = (html ?? "").replace(/\[sound:([^\]]+)\]/g, (_, name) => `<button type="button" class="play" data-sound="${escapeHtml(name)}">▶</button>`);
-  const doc = new DOMParser().parseFromString(`<body>${withSounds}</body>`, "text/html");
-  doc.querySelectorAll(BAD_TAGS).forEach((el) => {
-    if (!(el instanceof HTMLButtonElement && el.dataset.sound)) el.remove();
-  });
-  doc.body.querySelectorAll("*").forEach((el) => {
-    for (const attr of [...el.attributes]) {
-      const n = attr.name.toLowerCase();
-      if (n.startsWith("on")) el.removeAttribute(attr.name);
-      else if ((n === "href" || n === "src" || n === "xlink:href") && /^\s*javascript:/i.test(attr.value)) el.removeAttribute(attr.name);
-    }
-    if (el instanceof HTMLImageElement) {
-      const src = el.getAttribute("src") ?? "";
-      if (src && !/^[a-z]+:/i.test(src) && !src.startsWith("/")) el.setAttribute("src", ASSET_BASE + src);
-    }
-    if (el instanceof HTMLAnchorElement) {
-      el.setAttribute("target", "_blank");
-      el.setAttribute("rel", "noreferrer");
-    }
-  });
-  return doc.body.innerHTML;
+  return sanitizeHtml(html);
 }
 
 /** `[sound:a.mp3]` names in a field. */
@@ -176,24 +157,33 @@ function mediaHtml(field: string, f: Fields): string {
 export function fieldsToDocs(f: Fields): { question: string; answer: string } {
   const word = plain(f.word);
   const reading = plain(f.reading);
-  const head = `<p><b>${escapeHtml(word)}</b>${reading && reading !== word ? `【${escapeHtml(reading)}】` : ""} ${f.wordAudio ?? ""}</p>`;
-  const meta = [f.pitchAccents, f.frequencies].filter((x) => x?.trim()).join(" · ");
+  const sounds = (v: string | undefined) => soundsIn(v ?? "").map((src) => ({ type: "audio", attrs: { src } }));
+  const inline = (kind: string, html: string) => ({ type: "htmlInline", attrs: { kind, html } });
+  const block = (kind: string, html: string) => ({ type: "htmlBlock", attrs: { kind, html } });
+  const rich = (html: string) => (generateJSON(editorHtml(html), fieldExtensions).content ?? []) as any[];
+  const text = (t: string) => ({ type: "text", text: t });
+
+  // Like Senren's back: the word with furigana, audio and pitch accent; the
+  // frequency tags; the dictionary entry as Yomitan renders it; then picture,
+  // translation, sentence audio, notes and the source.
+  const ruby = reading && reading !== word ? `<ruby>${escapeHtml(word)}<rt>${escapeHtml(reading)}</rt></ruby>` : escapeHtml(word);
+  const head = { type: "paragraph", content: [inline("word", ruby), ...sounds(f.wordAudio), ...(f.pitchAccents?.trim() ? [inline("pitch", f.pitchAccents)] : [])] };
   const prefGloss = (f.dictionaryPreference ?? "").trim() === "glossary" ? f.glossary || f.definition : f.definition || f.glossary;
   const gloss = f.selectionText?.trim() ? f.selectionText : prefGloss;
-  const parts = [
+  const answer: any[] = [
     head,
-    meta ? `<p>${meta}</p>` : "",
-    gloss ?? "",
-    f.picture ?? "",
-    f.sentenceTranslation?.trim() ? `<p><i>${f.sentenceTranslation}</i></p>` : "",
-    f.sentenceAudio?.trim() ? `<p>sentence ${f.sentenceAudio}</p>` : "",
-    f.notes?.trim() ? `<p>${f.notes}</p>` : "",
-    f.miscInfo?.trim() ? `<p>— ${f.miscInfo}</p>` : "",
+    ...(f.frequencies?.trim() ? [block("freq", f.frequencies)] : []),
+    ...(gloss?.trim() ? [block("gloss", gloss)] : []),
+    ...(f.picture?.trim() ? rich(f.picture) : []),
+    ...(f.sentenceTranslation?.trim() ? [{ type: "paragraph", content: [{ ...text(plain(f.sentenceTranslation)), marks: [{ type: "italic" }] }] }] : []),
+    ...(f.sentenceAudio?.trim() ? [{ type: "paragraph", content: [text("sentence "), ...sounds(f.sentenceAudio)] }] : []),
+    ...(f.notes?.trim() ? rich(f.notes) : []),
+    ...(f.miscInfo?.trim() ? [{ type: "paragraph", content: [{ ...text(`— ${plain(f.miscInfo)}`), marks: [{ type: "italic" }] }] }] : []),
   ];
   const sentence = f.sentence?.trim() ? f.sentence : `<b>${escapeHtml(word)}</b>`;
   return {
     question: JSON.stringify(generateJSON(editorHtml(`<p>${sentence}</p>`), fieldExtensions)),
-    answer: JSON.stringify(generateJSON(editorHtml(parts.join("")), fieldExtensions)),
+    answer: JSON.stringify({ type: "doc", content: answer }),
   };
 }
 
@@ -223,7 +213,7 @@ async function renderOne(id: number, f: Record<string, any>) {
       const el = await api.getElement(id);
       if (!el?.item) throw new Error("not an item");
       const answer = JSON.parse(el.item.answer || '{"type":"doc","content":[]}');
-      const extra = generateJSON(editorHtml((changed as string[]).map((c) => mediaHtml(c, f)).join("")), fieldExtensions);
+      const extra = generateJSON(editorHtml((changed as string[]).map((c: string) => mediaHtml(c, f)).join("")), fieldExtensions);
       answer.content = [...(answer.content ?? []), ...(extra.content ?? [])];
       await api.renderedSentence(id, el.item.question, JSON.stringify(answer));
     } else {

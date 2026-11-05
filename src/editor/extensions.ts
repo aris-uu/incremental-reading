@@ -2,6 +2,7 @@ import { Extension, InputRule, Mark, generateJSON, mergeAttributes } from "@tipt
 import { MathBlock, MathInline } from "./math";
 import { Occlusion } from "./occlusion";
 import { AudioNode } from "./audio";
+import { HtmlBlock, HtmlInline } from "./html";
 import { toDisplaySrc, toStoredSrc } from "./assetSrc";
 
 export { toDisplaySrc } from "./assetSrc";
@@ -166,7 +167,7 @@ const LiveMarkdown = Extension.create({
   },
 });
 
-const base = [StarterKit.configure({ link: { openOnClick: false, autolink: true } }), LocalImage, MathInline, MathBlock, Occlusion, AudioNode, LiveMarkdown];
+const base = [StarterKit.configure({ link: { openOnClick: false, autolink: true } }), LocalImage, MathInline, MathBlock, Occlusion, AudioNode, HtmlBlock, HtmlInline, LiveMarkdown];
 
 /** Topics: rich text plus extract/cloze/ignore marks and the read point. */
 export const extensions = [...base, ExtractMark, ClozeMark, IgnoreMark, ReadPoint];

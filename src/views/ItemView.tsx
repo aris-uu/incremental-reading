@@ -329,6 +329,21 @@ export function ItemView({ element, mode, onFinish, onOpen, onChanged, onDelete,
           ))}
         <button disabled={busy} onClick={askReschedule} title="Ctrl+J">Reschedule…</button>
         {hasList && <button onClick={() => void splitList()} title="One item per list entry">Split list</button>}
+        {item.fields_json && mode === "browse" && (
+          <button
+            onClick={async () => {
+              if (!window.confirm("Rebuild this card from its Yomitan fields? Your edits to it are replaced (you can undo).")) return;
+              await api.requeueMined([element.id]);
+              const { renderPendingCards } = await import("../japanese");
+              await renderPendingCards();
+              notify("Card rebuilt", { undo: true });
+              onFinish("restored");
+            }}
+            title="Lay the card out again from the dictionary fields it was mined with"
+          >
+            Rebuild
+          </button>
+        )}
         {item.item_type === "qa" && (
           <button onClick={() => void addReverse()} title="Also ask the other way round, as a separate item">Add reverse</button>
         )}

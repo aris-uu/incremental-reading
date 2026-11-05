@@ -343,6 +343,16 @@ export default function App() {
     { label: "Back", hint: "Alt+←", run: () => go(-1) },
     { label: "Forward", hint: "Alt+→", run: () => go(1) },
     { label: "Browser: made today (end-of-day review)", run: () => browser("added<1") },
+    {
+      label: "Rebuild all mined cards from their Yomitan fields",
+      run: async () => {
+        if (!window.confirm("Lay out every mined card again from its dictionary fields? Edits to those cards are replaced (you can undo).")) return;
+        const n = await api.requeueMined(null);
+        await renderPendingCards();
+        notify(`Rebuilt ${n} cards`, { undo: true });
+        changed();
+      },
+    },
     { label: "Reload today's queue", run: () => void session.load().then((m) => m && notify(m)) },
     { label: "Back up the collection", run: () => void api.backup().then((p) => notify(`Backup written: ${p}`)) },
   ];

@@ -240,7 +240,7 @@ button.danger:hover:not(:disabled) { border-color: var(--g1); color: var(--g1); 
 .field .tiptap p { margin: 0.3em 0; }
 .field .tiptap img { max-width: 100%; }
 .field .tiptap.is-empty::before { content: attr(data-placeholder); color: var(--muted); float: left; height: 0; pointer-events: none; }
-.card-a .tiptap { color: var(--cloze); }
+.card-a .tiptap > p:first-child { color: var(--cloze); }
 .reveal { align-self: flex-start; margin: 14px 10px; }
 .card-meta { margin-top: 16px; padding-left: 10px; }
 
@@ -597,5 +597,43 @@ button { white-space: nowrap; }
 /* Sound buttons inside text (mined cards' audio). */
 .ir-sound { display: inline-block; }
 .ir-sound button { padding: 0 7px; border-radius: 12px; font-size: 11px; line-height: 1.6; vertical-align: middle; }
-.card-a b, .card-q b { color: inherit; }
-.card-q b { color: var(--cloze); }
+.card-q b, .card-q strong { color: var(--cloze); }
+
+/* ----- Dictionary HTML in cards (Senren-like layout) ----- */
+.ir-html { display: block; }
+.ir-html.inline { display: inline-block; vertical-align: baseline; margin-right: 0.5em; }
+.ir-html-edit { width: 100%; font: 12px ui-monospace, monospace; color: var(--text); background: var(--panel); border: 1px solid var(--accent); border-radius: 6px; }
+.ProseMirror-selectednode.ir-html, .ProseMirror-selectednode > .ir-html { outline: 2px solid var(--accent); border-radius: 4px; }
+.card-a .tiptap > p:first-child { display: flex; flex-wrap: wrap; align-items: center; gap: 0 0.6em; margin: 0 0 0.3em; }
+.ir-html.word { font-size: 2em; line-height: 1.25; font-weight: 500; }
+.ir-html.word rt { font-size: 0.42em; color: var(--muted); font-weight: 400; }
+.ir-html.pitch { font-size: 1.05em; color: var(--text); }
+.ir-html.pitch ol, .ir-html.pitch ul { display: inline-flex; gap: 0.8em; margin: 0; padding: 0; list-style: none; }
+.ir-html.pitch li { margin: 0; }
+.ir-html.freq { margin: 0 0 0.6em; font-family: var(--ui-font); font-size: 11px; }
+.ir-html.freq ul, .ir-html.freq ol { display: flex; flex-wrap: wrap; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.ir-html.freq li { padding: 1px 8px; border-radius: 10px; background: var(--extract); color: var(--text); margin: 0; }
+.ir-html.gloss {
+  font-size: 0.9em; line-height: 1.38; color: var(--text);
+  border-top: 1px solid var(--border); padding-top: 0.5em; margin-top: 0.2em;
+}
+.ir-html.gloss ul, .ir-html.gloss ol { margin: 0.15em 0 0.35em; padding-left: 1.3em; }
+.ir-html.gloss li { margin: 0; }
+.ir-html.gloss ol > li + li { margin-top: 0.35em; }
+.ir-html.gloss li::marker { color: var(--muted); }
+.ir-html.gloss p { margin: 0.2em 0; }
+.ir-html.gloss > .yomitan-glossary > i, .ir-html.gloss > i, .ir-html.gloss li > i:first-child {
+  display: inline-block; font-size: 0.72em; font-style: normal; color: var(--muted); margin-bottom: 0.1em;
+}
+.ir-html.gloss [data-sc-content="example-sentence"] {
+  border-left: 2px solid var(--border); padding-left: 0.6em; margin: 0.25em 0; font-size: 0.95em;
+}
+.ir-html.gloss [data-sc-content="example-sentence-b"] { color: var(--muted); font-size: 0.92em; }
+.ir-html.gloss [data-sc-content="attribution"], .ir-html.gloss [data-sc-content="extra-info"] { font-size: 0.75em; color: var(--muted); }
+.ir-html.gloss [data-sc-content="part-of-speech-info"], .ir-html.gloss [data-sc-class="tag"], .ir-html.gloss [data-sc-code] {
+  display: inline-block; font-size: 0.72em; font-weight: 600; line-height: 1.4; padding: 0 6px; border-radius: 4px;
+  background: var(--extract); color: var(--text); margin-right: 3px; vertical-align: 0.1em;
+}
+.ir-html.gloss img { max-height: 1.2em; vertical-align: middle; }
+.ir-html.gloss a { color: var(--accent); }
+.ir-html .play { padding: 0 7px; border-radius: 12px; font-size: 11px; }

@@ -317,6 +317,7 @@ export const api = {
   /** Mined card: a Q&A item with its fields kept as metadata (for AnkiConnect clients). */
   createSentence: (parentId: number | null, fields: Record<string, string>, tags: string[], priority: number | null, question: string, answer: string) =>
     invoke<number>("create_sentence", { parentId, fields, tags, priority, question, answer }),
+  requeueMined: (ids: number[] | null) => invoke<number>("requeue_mined", { ids }),
   pendingSentences: () => invoke<[number, Record<string, any>][]>("pending_sentences"),
   renderedSentence: (id: number, question: string, answer: string) => invoke<void>("rendered_sentence", { id, question, answer }),
   ensureDeck: (deck: string) => invoke<number | null>("ensure_deck", { deck }),
