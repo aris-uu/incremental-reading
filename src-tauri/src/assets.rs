@@ -107,11 +107,44 @@ pub fn save_bytes(bytes: &[u8], ext: &str, dir: &Path) -> Result<String, String>
 }
 
 /// Resolve an `irasset` request path to a file inside the assets folder.
-/// Only plain hash-named files are served.
+/// Only plain file names are served: letters, digits, `.`, `_` and `-`,
+/// no leading dot, no `..`.
 pub fn asset_path(dir: &Path, request_path: &str) -> Option<PathBuf> {
     let name = request_path.trim_start_matches('/');
-    let ok = !name.is_empty() && name.len() < 80 && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '.') && !name.contains("..");
+    let ok = !name.is_empty()
+        && name.len() < 120
+        && !name.starts_with('.')
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+        && !name.contains("..");
     ok.then(|| dir.join(name))
+}
+
+/// A file name made safe for the assets folder (keeps its extension).
+pub fn safe_name(name: &str) -> String {
+    let cleaned: String = name.chars().map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') { c } else { '_' }).collect();
+    let cleaned = cleaned.trim_start_matches('.').replace("..", "_");
+    let cleaned: String = cleaned.chars().rev().take(110).collect::<Vec<_>>().into_iter().rev().collect();
+    if cleaned.is_empty() { "media.bin".into() } else { cleaned }
+}
+
+/// Store bytes under a given name (media from Yomitan and other AnkiConnect
+/// clients, which reference files by the name they chose). Returns the name.
+pub fn save_named(bytes: &[u8], name: &str, dir: &Path) -> Result<String, String> {
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let name = safe_name(name);
+    std::fs::write(dir.join(&name), bytes).map_err(|e| e.to_string())?;
+    Ok(name)
+}
+
+/// Download a file (media referenced by URL in an AnkiConnect request).
+pub fn fetch_bytes(url: &str) -> Result<Vec<u8>, String> {
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err("Only http(s) URLs can be fetched".into());
+    }
+    let resp = agent().get(url).set("User-Agent", USER_AGENT).call().map_err(|e| e.to_string())?;
+    let mut bytes = Vec::new();
+    resp.into_reader().take(MAX_IMAGE_BYTES).read_to_end(&mut bytes).map_err(|e| e.to_string())?;
+    Ok(bytes)
 }
 
 pub fn mime_for(path: &Path) -> &'static str {
@@ -123,6 +156,13 @@ pub fn mime_for(path: &Path) -> &'static str {
         "svg" => "image/svg+xml",
         "avif" => "image/avif",
         "pdf" => "application/pdf",
+        "mp3" => "audio/mpeg",
+        "ogg" | "oga" | "opus" => "audio/ogg",
+        "wav" => "audio/wav",
+        "m4a" | "aac" => "audio/mp4",
+        "flac" => "audio/flac",
+        "mp4" => "video/mp4",
+        "webm" => "video/webm",
         _ => "application/octet-stream",
     }
 }
@@ -162,6 +202,9 @@ mod tests {
         assert!(asset_path(d, "/a/b.png").is_none());
         assert!(asset_path(d, "/a\\b.png").is_none());
         assert!(asset_path(d, "/").is_none());
+        assert!(asset_path(d, "/yomitan_audio_2025-06-12.mp3").is_some());
+        assert!(asset_path(d, "/.hidden").is_none());
+        assert_eq!(safe_name("../a b/c.mp3"), "_a_b_c.mp3");
     }
 
     #[test]

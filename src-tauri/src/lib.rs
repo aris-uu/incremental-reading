@@ -1,4 +1,6 @@
 mod anki;
+mod ankiconnect;
+mod sentence;
 mod assets;
 mod db;
 mod engine;
@@ -466,6 +468,87 @@ fn set_ui_state(state: State<AppState>, key: String, value: String) -> Result<()
     with(&state, |c| engine::set_ui_state(c, &key, &value))
 }
 
+// ----- Sentence mining -----
+
+#[tauri::command]
+fn create_sentence(
+    state: State<AppState>,
+    parent_id: Option<i64>,
+    fields: serde_json::Map<String, serde_json::Value>,
+    tags: Vec<String>,
+    priority: Option<f64>,
+) -> Result<i64> {
+    with(&state, |c| sentence::create(c, parent_id, &fields, &tags, priority, today()))
+}
+
+#[tauri::command]
+fn update_sentence(state: State<AppState>, id: i64, fields: serde_json::Map<String, serde_json::Value>) -> Result<()> {
+    undoable(&state, "Edit fields", |_| Ok(vec![id]), |c| sentence::update(c, id, &fields))
+}
+
+/// Topic for a deck path like "Japanese::Mining" (created if missing).
+#[tauri::command]
+fn ensure_deck(state: State<AppState>, deck: String) -> Result<Option<i64>> {
+    with(&state, |c| sentence::ensure_deck(c, &deck, today()))
+}
+
+/// Store media returned by the Yomitan API under its own name.
+#[tauri::command]
+fn save_media(state: State<AppState>, name: String, base64: String) -> Result<String> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD.decode(base64.trim()).map_err(|e| e.to_string())?;
+    assets::save_named(&bytes, &name, &state.assets_dir)
+}
+
+/// POST to the local Yomitan API (yomitan-api), from the core so the webview's
+/// CORS rules don't apply. Loopback addresses only.
+#[tauri::command]
+async fn yomitan_api(base: String, path: String, body: serde_json::Value) -> Result<serde_json::Value> {
+    let base = base.trim_end_matches('/').to_string();
+    if !(base.starts_with("http://127.0.0.1") || base.starts_with("http://localhost") || base.starts_with("http://[::1]")) {
+        return Err("The Yomitan API address must be on this computer (127.0.0.1 or localhost)".into());
+    }
+    let path: String = path.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+    tauri::async_runtime::spawn_blocking(move || {
+        let resp = ureq::AgentBuilder::new()
+            .timeout(std::time::Duration::from_secs(20))
+            .build()
+            .post(&format!("{base}/{path}"))
+            .set("Content-Type", "application/json")
+            .send_string(&body.to_string())
+            .map_err(|e| format!("Yomitan API: {e}"))?;
+        let text = resp.into_string().map_err(|e| e.to_string())?;
+        serde_json::from_str::<serde_json::Value>(&text).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[derive(Serialize, serde::Deserialize, Default)]
+struct AnkiConnectSettings {
+    /// 0 = off.
+    port: u16,
+    key: Option<String>,
+}
+
+fn ankiconnect_settings(c: &Connection) -> Result<AnkiConnectSettings> {
+    Ok(engine::get_ui_state(c, "ankiconnect")?
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or(AnkiConnectSettings { port: ankiconnect::DEFAULT_PORT, key: None }))
+}
+
+#[tauri::command]
+fn get_ankiconnect(state: State<AppState>) -> Result<AnkiConnectSettings> {
+    with(&state, ankiconnect_settings)
+}
+
+/// Takes effect at the next start of the app.
+#[tauri::command]
+fn set_ankiconnect(state: State<AppState>, port: u16, key: Option<String>) -> Result<()> {
+    let key = key.filter(|k| !k.trim().is_empty());
+    with(&state, |c| engine::set_ui_state(c, "ankiconnect", &serde_json::to_string(&AnkiConnectSettings { port, key }).map_err(|e| e.to_string())?))
+}
+
 #[tauri::command]
 fn set_flag(state: State<AppState>, id: i64, flag: String, value: bool) -> Result<()> {
     with(&state, |c| engine::set_flag(c, id, &flag, value))
@@ -530,6 +613,14 @@ pub fn run() {
                 data_dir,
             });
             ext_server::start(app.handle().clone(), token);
+            let ac = {
+                let state = app.state::<AppState>();
+                let conn = state.conn.lock().map_err(|e| e.to_string())?;
+                ankiconnect_settings(&conn)?
+            };
+            if ac.port != 0 {
+                ankiconnect::start(app.handle().clone(), ac.port, ac.key);
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -584,6 +675,13 @@ pub fn run() {
             backup,
             data_dir,
             set_flag,
+            create_sentence,
+            update_sentence,
+            ensure_deck,
+            save_media,
+            yomitan_api,
+            get_ankiconnect,
+            set_ankiconnect,
             set_afactor,
             browse_rows,
             set_tags,

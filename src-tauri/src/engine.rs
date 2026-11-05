@@ -177,6 +177,8 @@ pub struct ItemData {
     pub last_day: Option<i64>,
     pub reps: i64,
     pub lapses: i64,
+    /// Sentence items: their fields (JSON object).
+    pub fields_json: Option<String>,
 }
 
 #[derive(Serialize, Debug)]
@@ -1841,7 +1843,7 @@ pub fn get_element(conn: &Connection, id: i64) -> Result<ElementFull> {
         .map_err(e)?;
     el.item = conn
         .query_row(
-            "SELECT item_type, question, answer, stability, difficulty, interval_days, due_day, last_day, reps, lapses
+            "SELECT item_type, question, answer, stability, difficulty, interval_days, due_day, last_day, reps, lapses, fields_json
              FROM item WHERE element_id=?1",
             [id],
             |r| {
@@ -1856,6 +1858,7 @@ pub fn get_element(conn: &Connection, id: i64) -> Result<ElementFull> {
                     last_day: r.get(7)?,
                     reps: r.get(8)?,
                     lapses: r.get(9)?,
+                    fields_json: r.get(10)?,
                 })
             },
         )

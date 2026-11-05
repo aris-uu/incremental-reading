@@ -182,7 +182,12 @@ CREATE TABLE element_tag (
 CREATE INDEX element_tag_tag ON element_tag(tag_id);
 "#;
 
-pub const LATEST: i64 = 7;
+/// Schema version 8: field values of sentence items (sentence mining), as JSON.
+const SCHEMA_V8: &str = r#"
+ALTER TABLE item ADD COLUMN fields_json TEXT;
+"#;
+
+pub const LATEST: i64 = 8;
 
 pub fn open(path: &std::path::Path) -> rusqlite::Result<(Connection, i64)> {
     let conn = Connection::open(path)?;
@@ -223,6 +228,9 @@ fn init(conn: &Connection) -> rusqlite::Result<i64> {
     }
     if version < 7 {
         conn.execute_batch(&format!("BEGIN; {SCHEMA_V7} PRAGMA user_version = 7; COMMIT;"))?;
+    }
+    if version < 8 {
+        conn.execute_batch(&format!("BEGIN; {SCHEMA_V8} PRAGMA user_version = 8; COMMIT;"))?;
     }
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
     Ok(version)
