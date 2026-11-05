@@ -245,6 +245,103 @@ Priority is the concept people struggle with most.
   - Items: leech flags, a "needs work" flag (Alt+W), and a context drawer on the answer side.
   - Organising: breadcrumbs, tree filters (due, overdue, items, leeches, needs work, PDFs, videos, recently edited), and pinned roots.
 
+## 8c. UI/UX and workflow brainstorm (round 3)
+
+*Built (2026-11-05):*
+- **Space as the default action:** show answer → Good; Next for topics. Esc leaves the text, so Space works again.
+- **The element browser** (Ctrl+Shift+B), described below.
+- **A-Factor controls:** − / + nudges and an exact value on every topic, and bulk changes in the browser.
+
+### The element browser (built)
+One table of every element, in the main window, with a live preview and editor on the right. It replaces several one-off screens:
+- **Search language** in the Anki style:
+  - `is:due`, `is:overdue`, `is:leech`, `is:new`, `is:needs-work`, `is:video`, `is:pdf`, `is:cloze`, …
+  - `under:12` (a branch), `child:12`, `id:3,4`
+  - comparisons: `prio<20`, `due<=0`, `ivl>30`, `lapses>=4`, `af>2`, `added<7`, `edited<7`, `chars>5000`
+  - `title:word`, `-negation`, `a or b`; bare words search the full text.
+- **Presets:** priority queue, due today, overdue, leeches, needs work, new items, unread topics, videos and PDFs, added this week, inbox, done.
+- **Sorting:** every column sorts. The default `#` column is the priority queue order.
+- **Selection:**
+  - Selecting works like in a file manager: click, Ctrl+click, Shift+click, arrow keys, Ctrl+A.
+  - Shortcuts: <kbd>D</kbd> descendants, <kbd>R</kbd> review the selection (or every result) as a session, <kbd>P</kbd> priority, <kbd>A</kbd> A-Factor, <kbd>M</kbd> move, <kbd>Enter</kbd> open in the reader.
+  - The right-click menu also has parent, siblings, review branch, dismiss, done, restore, delete, needs work, and Anki export.
+- Right-click a branch in the tree and choose "Show descendants in the browser".
+
+### Next ideas for the browser
+- ★ **Saved searches** that you name and pin as chips, with counts. For example "Exam: cardio" = `under:120 is:item`.
+- ★ **Column chooser:** stability, retrievability today, created date, source, size, and the path in the tree.
+- **Inline edits:** type a priority or due date straight into the cell. Typing the priority uses the same queue placement as the header.
+- **Ranges by dragging the # column:** drag rows to reorder the priority queue by hand. That is SuperMemo's "priority queue" window, done well.
+- **Group by root or source** with collapsible groups and a subtotal per group (due, leeches).
+- **Find duplicates:** items whose question text is very similar, or extracts of the same passage.
+- **"Retrievability today" column and filter** (`r<0.8`): what is about to be forgotten.
+
+### Reading workflow
+- ★ **Read-point resume list:** "Continue reading" on the empty Learn screen. It lists started topics sorted by progress or priority, so a long article can be finished deliberately instead of waiting for its next interval.
+- ★ **Process-to-the-end mode:** a topic stays open after Next, and Space moves to the next paragraph after the read point. You decide topic by topic, but a session can be "finish this article" without going back to the queue.
+- **Extract with priority:** Shift+Alt+X asks for (or offsets) the new extract's priority, so important passages jump ahead of their parent.
+- **Extract into a new topic elsewhere**, for example "extract into: Cardiology", so the knowledge tree grows by subject rather than by source.
+- **Mark the read point automatically when scrolling past paragraphs that were all extracted or ignored.**
+- **Table of contents** (from the headings) in a narrow side gutter, with extract density shown per section.
+- **Video:** playback speed (1.25–2×) remembered per video, A–B repeat for a clip, a timestamp in the text for each clip extract, and keyboard frame-step for diagrams.
+
+### Item workflow
+- ★ **Edit while reviewing without breaking flow:** Ctrl+E focuses the question and Esc returns to grading. Saving is already automatic.
+- **Reverse card** for Q&A ("also ask answer → question"), created as a second item.
+- **Cloze siblings:** several clozes from one sentence spread out automatically, so they don't come up on the same day.
+- **Type-in answers** for short facts (spelling, numbers), with a diff shown on reveal.
+- **Image occlusion upgrades:** polygon or ellipse regions, a "hide one, show the others" mode, and grouping several regions into one item.
+
+### Navigation and organisation
+- **Back and forward** (Alt+←/→) through opened elements, like a browser.
+- **Recent elements** in the palette (Ctrl+K with no query).
+- **Hoisting:** focus the tree on one branch so its root becomes the top level, plus a breadcrumb to un-hoist.
+- **Tags and concepts:** the cross-cutting grouping from §6 that is still missing. Usable from the browser (`tag:physio`) and for subset review.
+- **Split view:** the source and its extract side by side, for rewriting an extract to stand on its own.
+
+### Feedback and calm
+- **Session goals:** "today: finish 2 articles, 150 reviews" with a quiet progress ring. No streak counter.
+- **End-of-day review:** what you extracted today, as a list to skim for anything you'd like to change.
+- **Undo history panel:** the last 30 journaled actions, each undoable on its own, not just the most recent.
+
+## 8d. Learning effectiveness and efficiency
+
+The aim is more retained knowledge per minute, not more reviews. Each idea below says what it improves and how we would check it.
+
+### Measure first
+- ★ **Per-element cost:** record time on card (the item grade log already exists; add `duration_ms`) and time on each topic read. Then the stats can show **cost per item per year** and **leeches by time spent**. That is the honest metric: a leech is whatever eats time, not just whatever has lapses.
+- ★ **Retention calibration:** compare predicted recall with actual results by priority band and by source, so you can see whether "critical" material really sits at 0.95.
+- **Source yield:** for each source, items created × retention ÷ minutes spent. This tells you which sources were worth importing, which should change triage.
+
+### Better items, fewer reviews
+- ★ **Stability-aware leech handling:** after the 4th lapse, offer **reformulate** (opens the editor with the lint hints), **split**, **add a mnemonic or image**, or **retire** (dismiss, keep the extract). Logging which choice was made shows over time what actually works.
+- **Interference detection:** items that are often forgotten together, or that have similar text, get flagged as "confusable". Suggest a contrastive item ("A vs B: what's the difference?").
+- **Answer-length budget:** lint already warns. Add a "simplify" action that splits a list answer into one cloze per entry.
+- **Context-free check:** before an item is created, show its question without its parent. If it doesn't make sense alone, it needs context. That is SuperMemo's "minimum information" rule made concrete.
+
+### Scheduling
+- ★ **FSRS per-item retrievability in the queue:** order items by how much each review is worth (expected stability gain per second) instead of only by priority, within the daily budget. Reviews that are almost certainly remembered move later automatically.
+- **Desired retention from priority** is already built. Add **"cram" retention** for a branch before a date (an exam): raise the target only for that branch until the date, then go back to normal.
+- **Topic A-Factor learning:** when you repeatedly press "Later today" or "Don't get it" on a topic, or postpone it, nudge its A-Factor up; when you extract a lot from it, nudge it down. SuperMemo does this by hand; we can suggest it with one click to accept.
+- **Load smoothing:** spread new extracts and items so next week's forecast stays flat. Today's Mercy fixes a backlog after the fact; smoothing prevents one.
+- **Sibling spacing:** an item's siblings (same parent) don't come up on the same day, which avoids getting the answer for free from a neighbour.
+
+### Reading efficiency
+- **Triage faster:** in the Inbox, show the estimated reading time and a short preview, so you can decide "skim" or "keep" quickly.
+- **Skim-first topics:** a topic's first read shows the headings and first sentences only. Pressing a key expands the section you want, and unread sections stay as children to read later.
+- **Extract budget per source:** a gentle counter ("12 extracts from this article") that nudges toward selectivity. Over-extracting is the most common way to build a backlog.
+- **Spaced reading of finished extracts:** when an extract has given its items, offer Done! (its job is done) instead of letting it come back forever.
+
+### Generation and transfer (deeper learning)
+- **Elaboration prompts** on some items, the "why?" and "how does this connect to…?" cards that the minimum-information principle tends to crowd out. Graded like normal items, but rare.
+- **Concept maps from the tree:** a branch view showing extracts and items as nodes. Seeing gaps helps decide what to read next.
+- **Interleaving by subject:** within the item budget, mix branches rather than doing all of one source in a row. This is better for discrimination, and the queue already interleaves topics.
+- **Retrieval before reading:** for a topic marked "important", show the titles of its existing items before the text, so you try to recall first, then read.
+
+### Priority hygiene
+- ★ **Priority audit:** a weekly prompt lists the 10 most important topics you haven't touched in a long time, with "still important?" buttons (keep, lower, dismiss). It stops the head of the queue from filling with good intentions.
+- **Priority drift by age:** let unopened low-value material slowly sink, with an undoable log of what moved.
+
 ## 9. Decisions (2026-11-04)
 
 1. **Mobile is a goal**, so we use Tauri 2 from the start.
