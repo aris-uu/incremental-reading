@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
-import { renderField, sentenceHtml, yomitanFields, type Fields } from "../japanese";
+import { fieldsToDocs, renderField, sentenceHtml, yomitanFields, type Fields } from "../japanese";
 import { loadPrefs } from "../prefs";
 import type { Notify } from "../notify";
 
@@ -72,7 +72,8 @@ export function MineDialog({ sentence, start, end, sourceId, sourceTitle, onClos
         miscInfo: sourceTitle,
       };
       const parent = prefs.mineInto === "deck" && prefs.mineDeck.trim() ? await api.ensureDeck(prefs.mineDeck) : sourceId;
-      const id = await api.createSentence(parent, fields, ["mined"], null);
+      const d = fieldsToDocs(fields);
+      const id = await api.createSentence(parent, fields, ["mined"], null, d.question, d.answer);
       notify(`Sentence card: ${fields.word}`);
       onCreated(id);
     } catch (e) {

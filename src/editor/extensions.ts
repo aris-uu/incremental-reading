@@ -1,6 +1,7 @@
 import { Extension, InputRule, Mark, generateJSON, mergeAttributes } from "@tiptap/react";
 import { MathBlock, MathInline } from "./math";
 import { Occlusion } from "./occlusion";
+import { AudioNode } from "./audio";
 import { toDisplaySrc, toStoredSrc } from "./assetSrc";
 
 export { toDisplaySrc } from "./assetSrc";
@@ -165,7 +166,7 @@ const LiveMarkdown = Extension.create({
   },
 });
 
-const base = [StarterKit.configure({ link: { openOnClick: false, autolink: true } }), LocalImage, MathInline, MathBlock, Occlusion, LiveMarkdown];
+const base = [StarterKit.configure({ link: { openOnClick: false, autolink: true } }), LocalImage, MathInline, MathBlock, Occlusion, AudioNode, LiveMarkdown];
 
 /** Topics: rich text plus extract/cloze/ignore marks and the read point. */
 export const extensions = [...base, ExtractMark, ClozeMark, IgnoreMark, ReadPoint];

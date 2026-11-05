@@ -43,7 +43,6 @@ const IS: Record<string, Pred> = {
   cloze: (r) => r.subtype === "cloze",
   qa: (r) => r.subtype === "qa",
   occlusion: (r) => r.subtype === "occlusion",
-  sentence: (r) => r.subtype === "sentence",
   text: (r) => r.subtype === "text",
   pdf: (r) => r.subtype === "pdf",
   video: (r) => r.subtype === "video",
@@ -237,7 +236,7 @@ export const PRESETS: { label: string; query: string; sort?: SortKey; desc?: boo
   { label: "Made today", query: "added<1", sort: "created", desc: true },
   { label: "Added this week", query: "added<7", sort: "created", desc: true },
   { label: "Duplicates", query: "is:duplicate", sort: "title" },
-  { label: "Sentence cards", query: "is:sentence", sort: "created", desc: true },
+  { label: "Mined cards", query: "tag:mined", sort: "created", desc: true },
   { label: "Inbox", query: "is:inbox", sort: "created", desc: true },
   { label: "Done & dismissed", query: "is:done or is:dismissed", sort: "updated", desc: true },
 ];

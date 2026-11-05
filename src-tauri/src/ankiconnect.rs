@@ -201,8 +201,11 @@ fn add_note(conn: &Connection, ctx: &Ctx, note: &Value) -> Result<i64, String> {
     let mut fields = fields_map(&note["fields"]);
     attach_media(ctx.assets, note, &mut fields)?;
     let parent = sentence::ensure_deck(conn, &s(&note["deckName"]), ctx.day)?;
-    let tags = strings(&note["tags"]);
-    sentence::create(conn, parent, &fields, &tags, None, ctx.day)
+    let mut tags = strings(&note["tags"]);
+    if !tags.iter().any(|t| t == "mined") {
+        tags.push("mined".into());
+    }
+    sentence::create(conn, parent, &fields, &tags, None, None, ctx.day)
 }
 
 /// Run one action. Errors are messages, as AnkiConnect reports them.
@@ -461,11 +464,12 @@ mod tests {
         assert_eq!(run(&c, &dir, "findNotes", json!({ "query": "added:1" })).unwrap(), json!([id]));
         let info = run(&c, &dir, "notesInfo", json!({ "notes": [id] })).unwrap();
         assert_eq!(info[0]["fields"]["reading"]["value"], "たべる");
-        assert_eq!(info[0]["tags"], json!(["yomitan"]));
+        assert_eq!(info[0]["tags"], json!(["mined", "yomitan"]));
 
         // mpvacious adds a picture to the last card.
         run(&c, &dir, "updateNoteFields", json!({ "note": { "id": id, "fields": { "picture": "<img src=\"shot.webp\">" } } })).unwrap();
         assert_eq!(sentence::fields_of(&c, id).unwrap().unwrap()["picture"], "<img src=\"shot.webp\">");
+        assert_eq!(engine::get_element(&c, id).unwrap().item.unwrap().item_type, "qa");
 
         assert!(run(&c, &dir, "deckNames", Value::Null).unwrap().as_array().unwrap().contains(&json!("Japanese::Mining")));
         let multi = run(&c, &dir, "multi", json!({ "actions": [{ "action": "version", "version": 6 }, { "action": "bogus" }] })).unwrap();

@@ -545,7 +545,6 @@ button { white-space: nowrap; }
 .browser-preview .actions { flex-wrap: wrap; }
 
 /* ----- Sentence cards (sentence mining) ----- */
-.sentence-card { font-family: var(--reader-font); }
 .sc-sentence { font-size: calc(var(--reader-size) * 1.45); line-height: 1.7; }
 .sc-sentence.small-sentence { font-size: calc(var(--reader-size) * 1.05); }
 .sc-sentence .highlight, .sc-sentence b, .sc-sentence strong { color: var(--cloze); font-weight: 700; }
@@ -559,9 +558,7 @@ button { white-space: nowrap; }
 .sc-picture img { max-width: 100%; max-height: 40vh; border-radius: 6px; margin-top: 8px; }
 .sc-translation { color: var(--muted); font-style: italic; margin-top: 4px; }
 .sc-source { margin-top: 8px; }
-.sc-play-big { font-size: 20px; padding: 14px 28px; }
 .play { padding: 0 8px; border-radius: 12px; font-size: 12px; }
-.sc-fields { display: grid; gap: 6px; }
 .sc-fields label { display: grid; grid-template-columns: 140px 1fr; gap: 8px; align-items: start; }
 .sc-fields textarea { font: 13px ui-monospace, monospace; width: 100%; color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 4px; }
 .pad-x { padding: 0 24px; }
@@ -596,3 +593,9 @@ button { white-space: nowrap; }
 .dot.connected { background: #16a34a; }
 .dot.connecting { background: #f59e0b; }
 .dot.error { background: #dc2626; }
+
+/* Sound buttons inside text (mined cards' audio). */
+.ir-sound { display: inline-block; }
+.ir-sound button { padding: 0 7px; border-radius: 12px; font-size: 11px; line-height: 1.6; vertical-align: middle; }
+.card-a b, .card-q b { color: inherit; }
+.card-q b { color: var(--cloze); }

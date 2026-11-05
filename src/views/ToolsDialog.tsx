@@ -527,23 +527,15 @@ function JapaneseTab({ notify }: { notify: Notify }) {
       </div>
       {test && <p className="small">{test}</p>}
 
-      <h3>Sentence cards</h3>
+      <h3>Mined cards</h3>
       <div className="form-grid">
         <label>
-          front shows
-          <select value={p.cardType} onChange={(e) => set({ cardType: e.target.value as Prefs["cardType"] })}>
-            <option value="sentence">the sentence, target word highlighted</option>
-            <option value="word">the word only</option>
-            <option value="audio">audio only</option>
-          </select>
-        </label>
-        <label>
-          <input type="checkbox" checked={p.autoplay} onChange={(e) => set({ autoplay: e.target.checked })} /> play audio automatically
+          <input type="checkbox" checked={p.autoplay} onChange={(e) => set({ autoplay: e.target.checked })} /> play the answer's audio on reveal
         </label>
       </div>
       <p className="muted small">
-        As in Senren, a note's own <code>sentenceCard</code> or <code>audioCard</code> field (any text) overrides the default. New mined cards are
-        placed in the queue by their frequency rank (<code>freqSort</code>): common words first.
+        Mined cards are ordinary Q&amp;A items: the sentence with the word in bold, and the word, reading, audio, pitch accent and gloss as the
+        answer. Edit them like any item. New cards are placed in the queue by their frequency rank (<code>freqSort</code>): common words first.
       </p>
     </div>
   );

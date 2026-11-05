@@ -1,6 +1,8 @@
 import { api } from "./api";
 import { ASSET_BASE } from "./editor/assetSrc";
 import { loadPrefs } from "./prefs";
+import { generateJSON } from "@tiptap/react";
+import { fieldExtensions } from "./editor/extensions";
 
 /** Field values of a sentence item (Senren field names). */
 export type Fields = Record<string, string>;
@@ -131,16 +133,102 @@ export function renderField(html: string): string {
 /** `[sound:a.mp3]` names in a field. */
 export const soundsIn = (html: string) => [...(html ?? "").matchAll(/\[sound:([^\]]+)\]/g)].map((m) => m[1]);
 
-let current: HTMLAudioElement | null = null;
-export function playSound(name: string) {
-  current?.pause();
-  current = new Audio(ASSET_BASE + name);
-  void current.play().catch(() => {});
+export { playSound } from "./editor/audio";
+
+// ---------- mined cards as ordinary Q&A items ----------
+
+/** Field HTML ready for the editor: safe, `[sound:x]` as audio nodes, local images by asset name. */
+function editorHtml(html: string): string {
+  const withSounds = (html ?? "").replace(/\[sound:([^\]]+)\]/g, (_, name) => `<span data-sound="${escapeHtml(name)}"></span>`);
+  const doc = new DOMParser().parseFromString(`<body>${withSounds}</body>`, "text/html");
+  doc.querySelectorAll(BAD_TAGS).forEach((el) => el.remove());
+  doc.body.querySelectorAll("*").forEach((el) => {
+    for (const attr of [...el.attributes]) if (attr.name.toLowerCase().startsWith("on")) el.removeAttribute(attr.name);
+    if (el instanceof HTMLImageElement) {
+      const src = el.getAttribute("src") ?? "";
+      if (src && !/^[a-z]+:/i.test(src) && !src.startsWith("/")) el.setAttribute("src", ASSET_BASE + src);
+    }
+    // Senren marks the target word with span.highlight: make it bold.
+    if (el.classList.contains("highlight")) {
+      const b = doc.createElement("b");
+      b.append(...el.childNodes);
+      el.replaceWith(b);
+    }
+  });
+  return doc.body.innerHTML;
 }
 
-/** Which card a sentence item shows, following Senren's flags. */
-export function cardKind(f: Fields): "word" | "sentence" | "audio" {
-  if (f.audioCard?.trim()) return "audio";
-  if (f.sentenceCard?.trim()) return "sentence";
-  return loadPrefs().cardType;
+const plain = (html: string) => (html ?? "").replace(/<[^>]+>/g, "").trim();
+
+/** Answer HTML for one changed media field (appended to an edited card). */
+function mediaHtml(field: string, f: Fields): string {
+  const v = f[field] ?? "";
+  if (!v.trim()) return "";
+  return field === "picture" ? v : `<p>${field === "sentenceAudio" ? "sentence " : ""}${v}</p>`;
+}
+
+/**
+ * A mined card's question and answer (ProseMirror JSON) from its fields:
+ * the sentence with the target word in bold; then the word with its reading
+ * and audio, pitch accent and frequency, the gloss, picture, translation,
+ * sentence audio, notes and source.
+ */
+export function fieldsToDocs(f: Fields): { question: string; answer: string } {
+  const word = plain(f.word);
+  const reading = plain(f.reading);
+  const head = `<p><b>${escapeHtml(word)}</b>${reading && reading !== word ? `【${escapeHtml(reading)}】` : ""} ${f.wordAudio ?? ""}</p>`;
+  const meta = [f.pitchAccents, f.frequencies].filter((x) => x?.trim()).join(" · ");
+  const prefGloss = (f.dictionaryPreference ?? "").trim() === "glossary" ? f.glossary || f.definition : f.definition || f.glossary;
+  const gloss = f.selectionText?.trim() ? f.selectionText : prefGloss;
+  const parts = [
+    head,
+    meta ? `<p>${meta}</p>` : "",
+    gloss ?? "",
+    f.picture ?? "",
+    f.sentenceTranslation?.trim() ? `<p><i>${f.sentenceTranslation}</i></p>` : "",
+    f.sentenceAudio?.trim() ? `<p>sentence ${f.sentenceAudio}</p>` : "",
+    f.notes?.trim() ? `<p>${f.notes}</p>` : "",
+    f.miscInfo?.trim() ? `<p>— ${f.miscInfo}</p>` : "",
+  ];
+  const sentence = f.sentence?.trim() ? f.sentence : `<b>${escapeHtml(word)}</b>`;
+  return {
+    question: JSON.stringify(generateJSON(editorHtml(`<p>${sentence}</p>`), fieldExtensions)),
+    answer: JSON.stringify(generateJSON(editorHtml(parts.join("")), fieldExtensions)),
+  };
+}
+
+/**
+ * Render the mined cards the core is waiting on (added through AnkiConnect,
+ * or converted from older versions). Fields that changed after the card was
+ * made (a picture or audio from mpvacious) are appended to its answer instead
+ * of rebuilding it, so edits survive.
+ */
+export async function renderPendingCards(): Promise<number> {
+  const list = await api.pendingSentences();
+  for (const [id, f] of list) {
+    try {
+      await renderOne(id, f);
+    } catch {
+      /* skip this card; the next pass tries again */
+    }
+  }
+  return list.length;
+}
+
+async function renderOne(id: number, f: Record<string, any>) {
+  {
+    const changed = f._pending;
+    const media = Array.isArray(changed) && changed.every((c: string) => ["picture", "sentenceAudio", "wordAudio"].includes(c));
+    if (media) {
+      const el = await api.getElement(id);
+      if (!el?.item) throw new Error("not an item");
+      const answer = JSON.parse(el.item.answer || '{"type":"doc","content":[]}');
+      const extra = generateJSON(editorHtml((changed as string[]).map((c) => mediaHtml(c, f)).join("")), fieldExtensions);
+      answer.content = [...(answer.content ?? []), ...(extra.content ?? [])];
+      await api.renderedSentence(id, el.item.question, JSON.stringify(answer));
+    } else {
+      const d = fieldsToDocs(f);
+      await api.renderedSentence(id, d.question, d.answer);
+    }
+  }
 }

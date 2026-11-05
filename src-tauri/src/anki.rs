@@ -99,6 +99,16 @@ fn media_in(html: &str) -> Vec<String> {
         }
         rest = &rest[end..];
     }
+    let mut rest = html;
+    while let Some(i) = rest.find("[sound:") {
+        rest = &rest[i + 7..];
+        let Some(end) = rest.find(']') else { break };
+        let name = &rest[..end];
+        if !name.contains('/') && !name.is_empty() && !out.iter().any(|x| x == name) {
+            out.push(name.to_string());
+        }
+        rest = &rest[end..];
+    }
     out
 }
 
@@ -220,8 +230,8 @@ mod tests {
 
     #[test]
     fn media_references_are_found() {
-        let html = r#"<p><img src="abc.png"> <img src="https://x/y.png"> <img src="def.jpg"></p>"#;
-        assert_eq!(media_in(html), vec!["abc.png", "def.jpg"]);
+        let html = r#"<p><img src="abc.png"> <img src="https://x/y.png"> <img src="def.jpg"> [sound:a_1.mp3]</p>"#;
+        assert_eq!(media_in(html), vec!["abc.png", "def.jpg", "a_1.mp3"]);
     }
 
     #[test]

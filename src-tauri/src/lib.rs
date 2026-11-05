@@ -477,13 +477,22 @@ fn create_sentence(
     fields: serde_json::Map<String, serde_json::Value>,
     tags: Vec<String>,
     priority: Option<f64>,
+    question: Option<String>,
+    answer: Option<String>,
 ) -> Result<i64> {
-    with(&state, |c| sentence::create(c, parent_id, &fields, &tags, priority, today()))
+    let docs = question.as_deref().zip(answer.as_deref());
+    with(&state, |c| sentence::create(c, parent_id, &fields, &tags, priority, docs, today()))
+}
+
+/// Mined cards whose documents the UI still has to build: [(id, fields)].
+#[tauri::command]
+fn pending_sentences(state: State<AppState>) -> Result<Vec<(i64, serde_json::Map<String, serde_json::Value>)>> {
+    with(&state, sentence::pending)
 }
 
 #[tauri::command]
-fn update_sentence(state: State<AppState>, id: i64, fields: serde_json::Map<String, serde_json::Value>) -> Result<()> {
-    undoable(&state, "Edit fields", |_| Ok(vec![id]), |c| sentence::update(c, id, &fields))
+fn rendered_sentence(state: State<AppState>, id: i64, question: String, answer: String) -> Result<()> {
+    with(&state, |c| sentence::rendered(c, id, &question, &answer))
 }
 
 /// Topic for a deck path like "Japanese::Mining" (created if missing).
@@ -682,7 +691,8 @@ pub fn run() {
             set_flag,
             append_lines,
             create_sentence,
-            update_sentence,
+            pending_sentences,
+            rendered_sentence,
             ensure_deck,
             save_media,
             yomitan_api,

@@ -21,6 +21,7 @@ export function ankiHtml(docJson: string): string {
     el.replaceWith(document.createTextNode(`\\[${el.getAttribute("data-latex") ?? ""}\\]`));
   }
   for (const el of root.querySelectorAll("[data-occlusion]")) el.removeAttribute("data-occlusion");
+  for (const el of root.querySelectorAll("[data-sound]")) el.replaceWith(document.createTextNode(`[sound:${el.getAttribute("data-sound")}]`));
   return root.innerHTML;
 }
 

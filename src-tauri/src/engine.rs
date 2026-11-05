@@ -645,6 +645,10 @@ pub fn save_item(conn: &Connection, id: i64, question: &str, answer: &str) -> Re
     index(conn, id)
 }
 
+pub fn touch_pub(conn: &Connection, id: i64) -> Result<()> {
+    touch(conn, id)
+}
+
 fn touch(conn: &Connection, id: i64) -> Result<()> {
     conn.execute("UPDATE element SET updated_at=?2 WHERE id=?1", params![id, now_ts()]).map_err(e)?;
     Ok(())

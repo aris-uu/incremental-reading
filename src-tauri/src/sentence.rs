@@ -1,11 +1,15 @@
-//! Sentence cards for language learning (sentence mining).
+//! Mined sentence cards (sentence mining).
 //!
-//! A sentence item keeps its fields as a JSON object, using the field names of
-//! the Senren note type for Anki, so an existing Yomitan setup for Senren works
-//! unchanged through the AnkiConnect-compatible server. The item's question and
-//! answer documents are kept in step as plain versions (the sentence with the
-//! target word in bold; the word, reading and a plain gloss) for search,
-//! titles and export.
+//! They are ordinary Q&A items: the question is the sentence with the target
+//! word in bold, the answer the word, reading, audio, pitch accent and gloss,
+//! all editable like any item. Alongside, the item keeps the note's fields
+//! (Senren's field names) as metadata, so Yomitan and other AnkiConnect
+//! clients can check duplicates, read notes back and add media later.
+//!
+//! The core only builds plain placeholder documents. The UI turns the fields'
+//! HTML into rich documents with the editor's own schema: items waiting for
+//! that carry `_pending` in their fields (`"all"`, or the names of the fields
+//! that changed, so media added later is appended without undoing edits).
 
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Map, Value};
@@ -161,12 +165,26 @@ fn title_for(fields: &Map<String, Value>) -> String {
     }
 }
 
-/// New sentence item. Priority: given, else from the frequency rank, else 50%
-/// (or right after the parent when there is one).
-pub fn create(conn: &Connection, parent: Option<i64>, fields: &Map<String, Value>, tags: &[String], priority: Option<f64>, day: i64) -> Result<i64> {
-    let fields = normalized(fields);
-    let (q, a) = docs(&fields);
-    let id = engine::create_item(conn, parent, "sentence", &q, &a, day)?;
+/// New mined card (a Q&A item). With `rendered` (question, answer) from the
+/// UI it is final; without, it gets placeholder documents and waits for the UI
+/// to render it. Priority: given, else from the frequency rank, else 50% (or
+/// right after the parent when there is one).
+pub fn create(
+    conn: &Connection,
+    parent: Option<i64>,
+    fields: &Map<String, Value>,
+    tags: &[String],
+    priority: Option<f64>,
+    rendered: Option<(&str, &str)>,
+    day: i64,
+) -> Result<i64> {
+    let mut fields = normalized(fields);
+    let placeholder = docs(&fields);
+    let (q, a) = rendered.unwrap_or((&placeholder.0, &placeholder.1));
+    let id = engine::create_item(conn, parent, "qa", q, a, day)?;
+    if rendered.is_none() {
+        fields.insert("_pending".into(), json!("all"));
+    }
     conn.execute("UPDATE item SET fields_json=?2 WHERE element_id=?1", params![id, Value::Object(fields.clone()).to_string()]).map_err(e)?;
     engine::set_title(conn, id, &title_for(&fields))?;
     if let Some(p) = priority.or_else(|| priority_from_freq(get(&fields, "freqSort"))) {
@@ -183,16 +201,44 @@ pub fn fields_of(conn: &Connection, id: i64) -> Result<Option<Map<String, Value>
     Ok(raw.flatten().and_then(|s| serde_json::from_str::<Value>(&s).ok()).and_then(|v| v.as_object().cloned()))
 }
 
-/// Merge field values into a sentence item and refresh its documents.
+/// Merge field values (from an AnkiConnect client) into a mined card. The
+/// changed field names are queued for the UI, which updates the card.
 pub fn update(conn: &Connection, id: i64, patch: &Map<String, Value>) -> Result<()> {
-    let mut fields = fields_of(conn, id)?.ok_or("Not a sentence item")?;
+    let mut fields = fields_of(conn, id)?.ok_or("Not a mined card")?;
+    let mut changed: Vec<Value> = match fields.get("_pending") {
+        Some(Value::Array(a)) => a.clone(),
+        Some(_) => vec![json!("all")],
+        None => Vec::new(),
+    };
     for (k, v) in patch {
+        if k == "_pending" {
+            continue;
+        }
         fields.insert(k.clone(), Value::String(v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string())));
+        if !changed.contains(&json!(k)) {
+            changed.push(json!(k));
+        }
     }
-    let (q, a) = docs(&fields);
+    let pending = if changed.contains(&json!("all")) { json!("all") } else { Value::Array(changed) };
+    fields.insert("_pending".into(), pending);
+    conn.execute("UPDATE item SET fields_json=?2 WHERE element_id=?1", params![id, Value::Object(fields).to_string()]).map_err(e)?;
+    engine::touch_pub(conn, id)
+}
+
+/// Mined cards waiting for the UI to render them: (id, fields).
+pub fn pending(conn: &Connection) -> Result<Vec<(i64, Map<String, Value>)>> {
+    Ok(all(conn)?.into_iter().filter(|(_, f, _)| f.contains_key("_pending")).map(|(id, f, _)| (id, f)).collect())
+}
+
+/// The UI rendered a mined card: store its documents and clear the flag.
+pub fn rendered(conn: &Connection, id: i64, question: &str, answer: &str) -> Result<()> {
+    let mut fields = fields_of(conn, id)?.ok_or("Not a mined card")?;
+    fields.remove("_pending");
     conn.execute("UPDATE item SET fields_json=?2 WHERE element_id=?1", params![id, Value::Object(fields.clone()).to_string()]).map_err(e)?;
-    engine::save_item(conn, id, &q, &a)?;
-    engine::set_title(conn, id, &title_for(&fields))
+    let title: String = conn.query_row("SELECT title FROM element WHERE id=?1", [id], |r| r.get(0)).map_err(e)?;
+    engine::save_item(conn, id, question, answer)?;
+    // Keep the "word — sentence" title (save_item would follow the question).
+    engine::set_title(conn, id, &title)
 }
 
 /// Topic for an Anki deck path ("Japanese::Mining"): top-level topics by
@@ -229,7 +275,7 @@ pub fn deck_of(conn: &Connection, id: i64) -> Result<String> {
 /// All sentence items: (id, fields, created_at, parent).
 pub fn all(conn: &Connection) -> Result<Vec<(i64, Map<String, Value>, i64)>> {
     let mut stmt = conn
-        .prepare("SELECT e.id, i.fields_json, e.created_at FROM element e JOIN item i ON i.element_id = e.id WHERE i.item_type = 'sentence' AND i.fields_json IS NOT NULL ORDER BY e.id")
+        .prepare("SELECT e.id, i.fields_json, e.created_at FROM element e JOIN item i ON i.element_id = e.id WHERE i.fields_json IS NOT NULL ORDER BY e.id")
         .map_err(e)?;
     let rows = stmt
         .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?)))
@@ -288,16 +334,23 @@ mod tests {
         let deck = ensure_deck(&c, "Japanese::Mining", 100).unwrap().unwrap();
         assert_eq!(ensure_deck(&c, "Japanese::Mining", 100).unwrap(), Some(deck));
         assert_eq!(ensure_deck(&c, "Default", 100).unwrap(), None);
-        let id = create(&c, Some(deck), &f(&[("word", "猫"), ("sentence", "<b>猫</b>がいる"), ("freqSort", "300")]), &["mined".into()], None, 100).unwrap();
+        let id = create(&c, Some(deck), &f(&[("word", "猫"), ("sentence", "<b>猫</b>がいる"), ("freqSort", "300")]), &["mined".into()], None, None, 100).unwrap();
         assert_eq!(deck_of(&c, id).unwrap(), "Japanese::Mining");
         assert_eq!(duplicate_of(&c, "猫").unwrap(), Some(id));
         assert_eq!(duplicate_of(&c, "犬").unwrap(), None);
         let el = engine::get_element(&c, id).unwrap();
-        assert_eq!(el.item.unwrap().item_type, "sentence");
+        assert_eq!(el.item.unwrap().item_type, "qa");
         assert!(el.title.starts_with("猫 — 猫がいる"));
         assert_eq!(el.tags, vec!["mined"]);
+        // Waiting for the UI to render it; then final.
+        assert_eq!(pending(&c).unwrap().len(), 1);
+        rendered(&c, id, &engine::EMPTY_DOC.replace("paragraph\"}", "paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"Q\"}]}"), engine::EMPTY_DOC).unwrap();
+        assert!(pending(&c).unwrap().is_empty());
+        assert!(engine::get_element(&c, id).unwrap().title.starts_with("猫 — "));
+        // A picture added later is queued as a change to that field only.
         update(&c, id, &f(&[("picture", "<img src=\"a.png\">")])).unwrap();
-        assert_eq!(fields_of(&c, id).unwrap().unwrap()["picture"], "<img src=\"a.png\">");
-        assert_eq!(fields_of(&c, id).unwrap().unwrap()["word"], "猫");
+        let fl = fields_of(&c, id).unwrap().unwrap();
+        assert_eq!((fl["picture"].as_str(), fl["word"].as_str()), (Some("<img src=\"a.png\">"), Some("猫")));
+        assert_eq!(fl["_pending"], json!(["picture"]));
     }
 }

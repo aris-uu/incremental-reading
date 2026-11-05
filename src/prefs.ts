@@ -4,8 +4,6 @@ export interface Prefs {
   grading: "4" | "2";
   /** "supermemo" adds Enter as the default action (like Space) for people coming from SuperMemo. */
   keys: "modern" | "supermemo";
-  /** Sentence items (Senren): what the front shows unless the note's own flags say otherwise. */
-  cardType: "sentence" | "word" | "audio";
   autoplay: boolean;
   /** Yomitan API (yomitan-api) address; empty = off. */
   yomitanUrl: string;
@@ -24,7 +22,6 @@ const KEY = "ir.prefs";
 const DEFAULTS: Prefs = {
   grading: "4",
   keys: "modern",
-  cardType: "sentence",
   autoplay: true,
   yomitanUrl: "http://127.0.0.1:19633",
   definitionMarker: "",

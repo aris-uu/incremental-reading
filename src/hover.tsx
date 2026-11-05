@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "./api";
-import { renderField, sentenceAround, sentenceHtml, yomitanEntries, yomitanFields, type Fields } from "./japanese";
+import { fieldsToDocs, renderField, sentenceAround, sentenceHtml, yomitanEntries, yomitanFields, type Fields } from "./japanese";
 import { loadPrefs } from "./prefs";
 import type { Notify } from "./notify";
 
@@ -193,7 +193,9 @@ export function LookupHover({ container, sourceId, sourceTitle, notify, onMined 
       const prefs = loadPrefs();
       const parent = prefs.mineInto === "deck" && prefs.mineDeck.trim() ? await api.ensureDeck(prefs.mineDeck) : sourceId;
       const { match: _m, ...fields } = chosen;
-      const id = await api.createSentence(parent, { ...fields, sentence: sentenceHtml(s.sentence, s.start, s.end), miscInfo: sourceTitle }, ["mined"], null);
+      const all = { ...fields, sentence: sentenceHtml(s.sentence, s.start, s.end), miscInfo: sourceTitle };
+      const d = fieldsToDocs(all);
+      const id = await api.createSentence(parent, all, ["mined"], null, d.question, d.answer);
       setAdded((a) => new Set(a).add(`${hit.offset}:${entry.word}`));
       notify(`Sentence card: ${entry.word}`);
       const r = rangeIn(hit.block, hit.offset, hit.offset + len);

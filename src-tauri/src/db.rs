@@ -187,7 +187,14 @@ const SCHEMA_V8: &str = r#"
 ALTER TABLE item ADD COLUMN fields_json TEXT;
 "#;
 
-pub const LATEST: i64 = 8;
+/// Schema version 9: mined cards are plain Q&A items (their fields stay as
+/// metadata); earlier "sentence" items are converted and re-rendered by the UI.
+const SCHEMA_V9: &str = r#"
+UPDATE item SET item_type = 'qa', fields_json = json_set(fields_json, '$._pending', 'all') WHERE item_type = 'sentence' AND fields_json IS NOT NULL;
+UPDATE item SET item_type = 'qa' WHERE item_type = 'sentence';
+"#;
+
+pub const LATEST: i64 = 9;
 
 pub fn open(path: &std::path::Path) -> rusqlite::Result<(Connection, i64)> {
     let conn = Connection::open(path)?;
@@ -231,6 +238,9 @@ fn init(conn: &Connection) -> rusqlite::Result<i64> {
     }
     if version < 8 {
         conn.execute_batch(&format!("BEGIN; {SCHEMA_V8} PRAGMA user_version = 8; COMMIT;"))?;
+    }
+    if version < 9 {
+        conn.execute_batch(&format!("BEGIN; {SCHEMA_V9} PRAGMA user_version = 9; COMMIT;"))?;
     }
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
     Ok(version)

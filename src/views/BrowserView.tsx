@@ -361,7 +361,7 @@ export function BrowserView({ initialQuery, today, version, notify, onOpen, onRe
       case "kind":
         return (
           <span title={`${r.subtype}${r.status === "active" ? ` · ${bandOf(r.priority).label} priority` : ""}`} className={`badge ${r.kind} band-${r.status === "active" ? bandOf(r.priority).name : "none"}`}>
-            {r.subtype === "sentence" ? "S" : r.kind === "item" ? "Q" : r.subtype[0].toUpperCase()}
+            {r.kind === "item" ? "Q" : r.subtype[0].toUpperCase()}
           </span>
         );
       case "title":

@@ -256,7 +256,7 @@ export const api = {
   fetchPage: (url: string) => invoke<{ html: string; final_url: string }>("fetch_page", { url }),
   createExtract: (parentId: number, title: string, docJson: string) =>
     invoke<number>("create_extract", { parentId, title, docJson }),
-  createItem: (parentId: number | null, itemType: "cloze" | "qa" | "occlusion" | "sentence", question: string, answer: string) =>
+  createItem: (parentId: number | null, itemType: "cloze" | "qa" | "occlusion", question: string, answer: string) =>
     invoke<number>("create_item", { parentId, itemType, question, answer }),
   saveTopic: (id: number, docJson: string, readPoint: number | null) =>
     invoke<void>("save_topic", { id, docJson, readPoint }),
@@ -314,9 +314,11 @@ export const api = {
   backup: () => invoke<string>("backup"),
   dataDir: () => invoke<string>("data_dir"),
   appendLines: (id: number, lines: string[], heading: string | null) => invoke<number>("append_lines", { id, lines, heading }),
-  createSentence: (parentId: number | null, fields: Record<string, string>, tags: string[], priority: number | null) =>
-    invoke<number>("create_sentence", { parentId, fields, tags, priority }),
-  updateSentence: (id: number, fields: Record<string, string>) => invoke<void>("update_sentence", { id, fields }),
+  /** Mined card: a Q&A item with its fields kept as metadata (for AnkiConnect clients). */
+  createSentence: (parentId: number | null, fields: Record<string, string>, tags: string[], priority: number | null, question: string, answer: string) =>
+    invoke<number>("create_sentence", { parentId, fields, tags, priority, question, answer }),
+  pendingSentences: () => invoke<[number, Record<string, any>][]>("pending_sentences"),
+  renderedSentence: (id: number, question: string, answer: string) => invoke<void>("rendered_sentence", { id, question, answer }),
   ensureDeck: (deck: string) => invoke<number | null>("ensure_deck", { deck }),
   saveMedia: (name: string, base64: string) => invoke<string>("save_media", { name, base64 }),
   yomitanApi: (base: string, path: string, body: unknown) => invoke<unknown>("yomitan_api", { base, path, body }),

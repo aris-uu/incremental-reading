@@ -16,6 +16,7 @@ import { fetchVideoInfo, youtubeId } from "./youtube";
 import { exportToAnki } from "./ankiExport";
 import { OcclusionDialog } from "./views/OcclusionDialog";
 import { BrowserView } from "./views/BrowserView";
+import { renderPendingCards } from "./japanese";
 import { HookerContext, useTexthooker } from "./texthooker";
 
 import { isTyping } from "./keys";
@@ -84,6 +85,8 @@ export default function App() {
   /** Refresh the tree, inbox and counters. */
   const changed = useCallback(() => {
     setVersion((v) => v + 1);
+    // Cards added through AnkiConnect (Yomitan) arrive as fields: build their documents.
+    void renderPendingCards().catch(() => {});
     api.getStats().then(setStats).catch((e) => notify(String(e)));
   }, [notify]);
   useEffect(changed, [changed]);
@@ -109,7 +112,7 @@ export default function App() {
     // guiBrowse / guiEditNote from Yomitan or another AnkiConnect client.
     const unShow = listen<number[]>("anki-show", ({ payload }) => {
       if (payload.length === 1) setView({ kind: "browse", id: payload[0] });
-      else setView({ kind: "browser", query: payload.length ? `id:${payload.join(",")}` : "is:sentence" });
+      else setView({ kind: "browser", query: payload.length ? `id:${payload.join(",")}` : "tag:mined" });
     });
     const unExternal = listen<ExternalImport>("external-import", async ({ payload }) => {
       try {

@@ -417,11 +417,13 @@ The aim is more retained knowledge per minute, not more reviews. Each idea below
 **Goal:** keep Yomitan and its dictionaries, but mine into this collection, where cards sit next to the text they came from and share one priority queue with the reading.
 
 ### Built (2026-11-05)
-- **Sentence items** (`item_type = sentence`). They store Senren's fields: `word`, `reading`, `sentence`, `sentenceFurigana`, `sentenceTranslation`, `definition`, `glossary`, `wordAudio`, `sentenceAudio`, `picture`, `pitchAccents`, `frequencies`, `freqSort`, `miscInfo`, …
-  - **Front:** the sentence with the target word highlighted (`<b>` or `span.highlight`, like Senren).
-  - **Back:** the word with furigana, audio buttons, pitch accent, frequencies, the gloss (Senren's order: selection text, then definition, then glossary), picture, translation, notes and source.
-  - Card type follows Senren's `sentenceCard` / `audioCard` flags. The default is set in Tools → Japanese & Yomitan and is "sentence".
-  - Audio plays automatically. Dictionary HTML is sanitised (no scripts, embeds or event handlers).
+- **Mined cards are ordinary Q&A items**, edited like any other item.
+  - **Question:** the sentence with the target word in bold.
+  - **Answer:** the word【reading】 with a ▶ audio button, pitch accent and frequency, the gloss (Senren's order: selection text, then definition, then glossary), picture, translation, sentence audio, notes and source.
+  - Audio is a node in the editor (▶), and plays on reveal if the setting is on. The Anki export turns it back into `[sound:…]`.
+  - The note's Senren fields are kept as hidden metadata, so AnkiConnect clients can check duplicates and read or update the note. A picture or audio added later (mpvacious) is appended to the answer, so your edits stay.
+  - Cards added through AnkiConnect are turned into rich documents by the app as soon as they arrive (the `_pending` flag).
+
 - **Yomitan → app (AnkiConnect-compatible server)**, on 127.0.0.1:8766 by default:
   - Point Yomitan's AnkiConnect address at the app and choose the **Senren** note type. Senren's recommended field markers work unchanged.
   - Supported actions: `version`, `deckNames`, `modelNames`, `modelFieldNames`, `findNotes` (`deck:`, `word:`, wildcards, `added:N`), `canAddNotes` (duplicate check on `word`), `addNote(s)`, `storeMediaFile`, `notesInfo`, `updateNoteFields`, `guiBrowse`, `guiEditNote`, `multi`, …
