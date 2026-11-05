@@ -104,14 +104,8 @@ function TextTopicView({ element, mode, onFinish, onOpen, onChanged, onDelete, o
     editorProps: {
       // Ctrl+click an extracted or clozed span to open its child element.
       handleClick(_view, _pos, event) {
-        // Transcript timestamps seek the video.
-        const link = (event.target as HTMLElement).closest("a[href^='#t=']") as HTMLAnchorElement | null;
-        const at = timeFromHref(link?.getAttribute("href"));
-        if (at != null) {
-          event.preventDefault();
-          video.current?.seek(at);
-          return true;
-        }
+        // Transcript timestamps are handled by the reader's click handler (seek, never open a browser).
+        if ((event.target as HTMLElement).closest("a[href^='#t=']")) return true;
         const span = (event.target as HTMLElement).closest("[data-extract],[data-cloze]") as HTMLElement | null;
         if (!span || !(event.ctrlKey || event.metaKey) || !onOpen) return false;
         const cid = Number(span.dataset.extract ?? span.dataset.cloze);
@@ -457,6 +451,14 @@ function TextTopicView({ element, mode, onFinish, onOpen, onChanged, onDelete, o
           requestAnimationFrame(updateProgress);
         }}
         onMouseOver={onReaderOver}
+        onClickCapture={(ev) => {
+          // Runs before the opener plugin's window listener, which skips prevented clicks.
+          const link = (ev.target as HTMLElement).closest("a[href^='#t=']");
+          const at = timeFromHref(link?.getAttribute("href"));
+          if (at == null) return;
+          ev.preventDefault();
+          video.current?.seek(at);
+        }}
         onMouseLeave={() => ((peekTarget.current = null), setPeek(null))}
       >
         {peek && (
