@@ -304,6 +304,44 @@ One table of every element, in the main window, with a live preview and editor o
 - **End-of-day review:** what you extracted today, as a list to skim for anything you'd like to change.
 - **Undo history panel:** the last 30 journaled actions, each undoable on its own, not just the most recent.
 
+### Status of round 3 (2026-11-05)
+**Built:**
+- **Browser:**
+  - saved searches stored as chips in the collection;
+  - a column chooser (right-click the header) with R, stability, tags, size and date added;
+  - double-click to type a priority;
+  - drag rows to reorder the priority queue when sorted by #;
+  - `is:duplicate`, `tag:x`, `r<0.85`, and the "About to be forgotten" and "Made today" presets.
+- **Reading:**
+  - Shift+Alt+X extracts with a chosen priority;
+  - an extract counter ("12 from this topic — be selective");
+  - a Contents menu;
+  - video speed remembered per video (Alt+.), with Alt+J/L to skip 10 s.
+- **Items:**
+  - Ctrl+E edits the question during review;
+  - reverse cards for Q&A;
+  - one per day per parent, so siblings are spaced apart in the daily queue;
+  - leech actions (Reformulate / Split / Retire);
+  - "Split list" for list answers;
+  - pass/fail grading as an option.
+- **Navigation:** back/forward (Alt+←/→), recent elements in Ctrl+K, focusing the tree on a branch, and tags with an editor in the header.
+- **Calm:** an undo-history dialog; "Continue reading" and "Still important?" (priority audit) on the empty Learn screen.
+- **Tools:**
+  - "Before a break" brings upcoming work forward;
+  - an exam mode with higher retention for one branch until a date;
+  - a SuperMemo key preset (Enter as Space, Alt+P priority).
+
+**Not built yet:**
+- browser: grouping by root
+- process-to-the-end mode
+- extracting into a topic elsewhere
+- an automatic read point past processed paragraphs
+- video frame-step
+- type-in answers
+- occlusion polygons and grouping
+- split view
+- session goals
+
 ## 8d. Learning effectiveness and efficiency
 
 The aim is more retained knowledge per minute, not more reviews. Each idea below says what it improves and how we would check it.
@@ -341,6 +379,29 @@ The aim is more retained knowledge per minute, not more reviews. Each idea below
 ### Priority hygiene
 - ★ **Priority audit:** a weekly prompt lists the 10 most important topics you haven't touched in a long time, with "still important?" buttons (keep, lower, dismiss). It stops the head of the queue from filling with good intentions.
 - **Priority drift by age:** let unopened low-value material slowly sink, with an undoable log of what moved.
+
+
+### Status (2026-11-05)
+**Built:**
+- **Measurement:** time per review and per read, cost per item, retention calibration by priority band, the items that cost the most time, and minutes and items per hour per source (all in Stats).
+- **Leech actions.**
+- **Exam mode.**
+- **Smoothing new material:** new extracts and items go to the least loaded of the next 3 days when tomorrow is over budget.
+- **Sibling spacing.**
+- **Priority audit.**
+- **Extract counter**, and a "Done! once it has nothing more to give" hint on extracts that have produced items.
+- **A-Factor nudge:** "Don't get it" adds 0.2.
+
+**Not built yet:**
+- ordering items by the value of each review
+- spotting confusable pairs
+- skim-first topics
+- elaboration prompts
+- concept maps
+- interleaving by subject
+- recalling before reading
+- priority drift
+- automatic A-Factor learning beyond the "Don't get it" nudge
 
 ## 9. Decisions (2026-11-04)
 
