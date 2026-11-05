@@ -163,6 +163,8 @@ function PdfPage({ pdf, n, scale, size, marks, regionMode, onRegion, onMark }: P
  * (figure, formula, table) as an image. The read point is the page.
  */
 export function PdfView({ element, mode, onFinish, onOpen, onChanged, onDelete, onReviewBranch, notify }: TopicViewProps) {
+  /** For the time-per-read statistics. */
+  const openedAt = useRef(Date.now());
   const id = element.id;
   const topic = element.topic!;
   const active = element.status === "active";
@@ -310,7 +312,7 @@ export function PdfView({ element, mode, onFinish, onOpen, onChanged, onDelete, 
       setBusy(true);
       try {
         await savePage(page);
-        if (outcome === "next") notify(`Next read in ${fmtDays(await api.topicRead(id))}`);
+        if (outcome === "next") notify(`Next read in ${fmtDays(await api.topicRead(id, Date.now() - openedAt.current))}`);
         else if (outcome === "done") {
           await api.done(id);
           notify("Done!", { undo: true });

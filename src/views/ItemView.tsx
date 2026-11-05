@@ -94,6 +94,15 @@ export function ItemView({ element, mode, onFinish, onOpen, onChanged, onDelete,
   const timer = useRef<number | undefined>(undefined);
   const [hints, setHints] = useState(() => lintItem(item.question, item.answer));
   const [needsWork, setNeedsWork] = useState(element.needs_work);
+  /** Time on card, for the cost statistics. */
+  const openedAt = useRef(Date.now());
+  const cardRef = useRef<HTMLDivElement>(null);
+  /** Put the cursor in the question to fix the item, without leaving the queue. */
+  const editQuestion = useCallback(() => {
+    const el = cardRef.current?.querySelector(".card-q .tiptap") as HTMLElement | null;
+    el?.focus();
+  }, []);
+
   const leech = item.lapses >= LEECH_LAPSES;
 
   const toggleNeedsWork = useCallback(async () => {
@@ -126,6 +135,25 @@ export function ItemView({ element, mode, onFinish, onOpen, onChanged, onDelete,
 
   useEffect(() => () => void save(), [save]);
 
+  /** A sibling item under the same parent (e.g. when splitting a leech in two). */
+  const addSibling = useCallback(async () => {
+    await save();
+    const empty = JSON.stringify({ type: "doc", content: [{ type: "paragraph" }] });
+    const id = await api.createItem(element.parent_id, "qa", q.current, empty);
+    notify("New item with the same question: edit both so each asks one thing");
+    onChanged?.();
+    onOpen?.(id);
+  }, [element.parent_id, notify, onChanged, onOpen, save]);
+
+  /** Q&A: also ask the other way round (answer → question), as its own item. */
+  const addReverse = useCallback(async () => {
+    await save();
+    const id = await api.createItem(element.parent_id, "qa", a.current, q.current);
+    notify("Reverse item created", { undo: false });
+    onChanged?.();
+    if (mode === "browse") onOpen?.(id);
+  }, [element.parent_id, mode, notify, onChanged, onOpen, save]);
+
   useEffect(() => {
     api.previewItem(element.id).then(setPreview).catch(() => setPreview(null));
   }, [element.id]);
@@ -150,7 +178,7 @@ export function ItemView({ element, mode, onFinish, onOpen, onChanged, onDelete,
   const grade = useCallback(
     (g: 1 | 2 | 3 | 4) =>
       act(async () => {
-        const iv = await api.gradeItem(element.id, g);
+        const iv = await api.gradeItem(element.id, g, Date.now() - openedAt.current);
         notify(g === 1 ? "Again — back later today" : `Next review in ${fmtDays(iv)}`);
       }, g === 1 ? "again" : "graded"),
     [act, element.id, notify],
@@ -166,6 +194,8 @@ export function ItemView({ element, mode, onFinish, onOpen, onChanged, onDelete,
     const onKey = (ev: KeyboardEvent) => {
       if (ev.ctrlKey && ev.key.toLowerCase() === "j") return ev.preventDefault(), askReschedule();
       if (ev.altKey && ev.key.toLowerCase() === "w") return ev.preventDefault(), void toggleNeedsWork();
+      if (ev.ctrlKey && ev.key.toLowerCase() === "e") return ev.preventDefault(), editQuestion();
+      if (ev.key === "Escape" && isTyping(ev.target)) return (ev.target as HTMLElement).blur();
       // Space: show the answer, then grade Good.
       if (isDefaultAction(ev)) {
         if (!shown) setShown(true);
@@ -183,7 +213,7 @@ export function ItemView({ element, mode, onFinish, onOpen, onChanged, onDelete,
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [askReschedule, canGrade, grade, shown, toggleNeedsWork]);
+  }, [askReschedule, canGrade, editQuestion, grade, shown, toggleNeedsWork]);
 
   return (
     <div className="element-view">
@@ -196,11 +226,18 @@ export function ItemView({ element, mode, onFinish, onOpen, onChanged, onDelete,
       />
       {(leech || needsWork) && (
         <div className="flag-banner small">
-          {leech && <span className="chip warn">leech: forgotten {item.lapses}×. Rescheduling won't fix it; rewrite or split it</span>}
+          {leech && (
+            <>
+              <span className="chip warn">leech: forgotten {item.lapses}×. Rescheduling won't fix it</span>
+              <button className="small-btn" onClick={editQuestion} title="Ctrl+E — rewrite it; the hints below follow the minimum-information principle">Reformulate</button>
+              <button className="small-btn" onClick={() => void addSibling()} title="Split: a second item with the same question, to divide what it asks">Split</button>
+              <button className="small-btn" onClick={() => act(() => api.dismiss(element.id).then(() => notify("Retired (dismissed); its source extract stays", { undo: true })), "dismiss")} title="Stop reviewing it; keep it and its source">Retire</button>
+            </>
+          )}
           {needsWork && <span className="chip warn">needs work</span>}
         </div>
       )}
-      <div className="card">
+      <div className="card" ref={cardRef}>
         <div className="card-label">Question</div>
         <RichField className="card-q" docJson={item.question} onChange={edited("q")} placeholder="Question…" />
         {shown ? (
@@ -244,6 +281,9 @@ export function ItemView({ element, mode, onFinish, onOpen, onChanged, onDelete,
             </button>
           ))}
         <button disabled={busy} onClick={askReschedule} title="Ctrl+J">Reschedule…</button>
+        {item.item_type === "qa" && (
+          <button onClick={() => void addReverse()} title="Also ask the other way round, as a separate item">Add reverse</button>
+        )}
         <button className={needsWork ? "active" : ""} onClick={() => void toggleNeedsWork()} title="Alt+W — mark to rewrite later; the schedule is unchanged">
           {needsWork ? "✓ Needs work" : "Needs work"}
         </button>

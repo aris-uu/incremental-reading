@@ -19,6 +19,67 @@ function whyChips(el: ElementFull, today: number | null, rank: number, size: num
   return out;
 }
 
+/** Tags: concepts that cut across sources (`tag:x` in the browser). */
+function TagEditor({ id, tags, onChanged }: { id: number; tags: string[]; onChanged?: () => void }) {
+  const [list, setList] = useState(tags);
+  const [adding, setAdding] = useState(false);
+  const [text, setText] = useState("");
+  const [known, setKnown] = useState<string[]>([]);
+  useEffect(() => setList(tags), [id, tags]);
+  const save = async (next: string[]) => {
+    await api.setTags(id, next);
+    setList(next);
+    onChanged?.();
+  };
+  const add = () => {
+    const names = text.split(/[,\s]+/).map((t) => t.replace(/^#/, "").trim()).filter(Boolean);
+    setText("");
+    setAdding(false);
+    const next = [...list, ...names.filter((n) => !list.some((x) => x.toLowerCase() === n.toLowerCase()))];
+    if (next.length !== list.length) void save(next);
+  };
+  return (
+    <span className="tags">
+      {list.map((t) => (
+        <span key={t} className="tag">
+          #{t}
+          <a onClick={() => void save(list.filter((x) => x !== t))} title="Remove tag">×</a>
+        </span>
+      ))}
+      {adding ? (
+        <>
+          <input
+            className="tag-input"
+            autoFocus
+            list="known-tags"
+            value={text}
+            placeholder="tag"
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => (e.key === "Enter" ? add() : e.key === "Escape" && setAdding(false))}
+            onBlur={add}
+          />
+          <datalist id="known-tags">
+            {known.map((k) => (
+              <option key={k} value={k} />
+            ))}
+          </datalist>
+        </>
+      ) : (
+        <a
+          className="muted"
+          onClick={() => {
+            setAdding(true);
+            api.allTags().then((t) => setKnown(t.map(([n]) => n))).catch(() => {});
+          }}
+          title="Add a tag"
+        >
+          + tag
+        </a>
+      )}
+    </span>
+  );
+}
+
 function hostname(url: string) {
   try {
     return new URL(url).hostname;
@@ -155,6 +216,7 @@ export function ElementHeader({ element, onOpen, onChanged, onRestore, onReviewB
         )}
         {ref?.author && <span>· {ref.author}</span>}
         {element.children > 0 && <span>· {element.children} children</span>}
+        <TagEditor id={element.id} tags={element.tags} onChanged={onChanged} />
       </div>
     </header>
   );

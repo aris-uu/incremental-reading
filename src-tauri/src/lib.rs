@@ -128,8 +128,14 @@ fn save_item(state: State<AppState>, id: i64, question: String, answer: String) 
 }
 
 #[tauri::command]
-fn topic_read(state: State<AppState>, id: i64) -> Result<i64> {
-    with(&state, |c| engine::topic_read(c, id, today()))
+fn topic_read(state: State<AppState>, id: i64, duration_ms: Option<i64>) -> Result<i64> {
+    with(&state, |c| {
+        let n = engine::topic_read(c, id, today())?;
+        if let Some(ms) = duration_ms {
+            engine::set_last_duration(c, id, ms)?;
+        }
+        Ok(n)
+    })
 }
 
 #[tauri::command]
@@ -278,8 +284,14 @@ fn preview_item(state: State<AppState>, id: i64) -> Result<[i64; 4]> {
 }
 
 #[tauri::command]
-fn grade_item(state: State<AppState>, id: i64, grade: i64) -> Result<i64> {
-    with_fsrs(&state, |c, f| engine::grade_item(c, f, id, grade, today()))
+fn grade_item(state: State<AppState>, id: i64, grade: i64, duration_ms: Option<i64>) -> Result<i64> {
+    with_fsrs(&state, |c, f| {
+        let n = engine::grade_item(c, f, id, grade, today())?;
+        if let Some(ms) = duration_ms {
+            engine::set_last_duration(c, id, ms)?;
+        }
+        Ok(n)
+    })
 }
 
 // ----- Queue and overload -----
@@ -386,7 +398,64 @@ fn set_video_pos(state: State<AppState>, id: i64, pos: f64) -> Result<()> {
 
 #[tauri::command]
 fn browse_rows(state: State<AppState>) -> Result<Vec<engine::BrowseRow>> {
-    with(&state, engine::browse_rows)
+    with(&state, |c| engine::browse_rows(c, today()))
+}
+
+#[tauri::command]
+fn set_tags(state: State<AppState>, id: i64, tags: Vec<String>) -> Result<()> {
+    undoable(&state, "Tags", |_| Ok(vec![id]), |c| engine::set_tags(c, id, &tags))
+}
+
+#[tauri::command]
+fn tag_many(state: State<AppState>, ids: Vec<i64>, tag: String, add: bool) -> Result<()> {
+    undoable(&state, "Tags", |_| Ok(ids.clone()), |c| engine::tag_many(c, &ids, &tag, add))
+}
+
+#[tauri::command]
+fn all_tags(state: State<AppState>) -> Result<Vec<(String, i64)>> {
+    with(&state, engine::all_tags)
+}
+
+#[tauri::command]
+fn get_cram(state: State<AppState>) -> Result<Vec<engine::Cram>> {
+    with(&state, engine::get_cram)
+}
+
+#[tauri::command]
+fn set_cram(state: State<AppState>, list: Vec<engine::Cram>) -> Result<()> {
+    with(&state, |c| engine::set_cram(c, &list, today()))
+}
+
+#[tauri::command]
+fn continue_reading(state: State<AppState>) -> Result<Vec<engine::Started>> {
+    with(&state, |c| engine::continue_reading(c, 12))
+}
+
+#[tauri::command]
+fn priority_audit(state: State<AppState>) -> Result<Vec<engine::Anchor>> {
+    with(&state, |c| engine::priority_audit(c, today()))
+}
+
+#[tauri::command]
+fn mark_audited(state: State<AppState>, id: i64) -> Result<()> {
+    with(&state, |c| engine::mark_audited(c, id, today()))
+}
+
+/// Labels of the undo journal, most recent first.
+#[tauri::command]
+fn undo_list(state: State<AppState>) -> Result<Vec<String>> {
+    Ok(state.undo.lock().map_err(|e| e.to_string())?.iter().rev().map(|(l, _)| l.clone()).collect())
+}
+
+/// Generic per-collection UI state (saved searches and the like), as JSON text.
+#[tauri::command]
+fn get_ui_state(state: State<AppState>, key: String) -> Result<Option<String>> {
+    with(&state, |c| engine::get_ui_state(c, &key))
+}
+
+#[tauri::command]
+fn set_ui_state(state: State<AppState>, key: String, value: String) -> Result<()> {
+    with(&state, |c| engine::set_ui_state(c, &key, &value))
 }
 
 #[tauri::command]
@@ -508,6 +577,17 @@ pub fn run() {
             set_flag,
             set_afactor,
             browse_rows,
+            set_tags,
+            tag_many,
+            all_tags,
+            get_cram,
+            set_cram,
+            continue_reading,
+            priority_audit,
+            mark_audited,
+            undo_list,
+            get_ui_state,
+            set_ui_state,
             create_clip,
             set_video_pos,
             session_summary,

@@ -89,6 +89,15 @@ pub fn set_settings(conn: &Connection, s: &Settings) -> Result<()> {
     put_setting(conn, "settings", &serde_json::to_string(&s).map_err(e)?)
 }
 
+/// UI state that belongs to the collection (saved searches…), under `ui.<key>`.
+pub fn get_ui_state(conn: &Connection, key: &str) -> Result<Option<String>> {
+    setting(conn, &format!("ui.{key}"))
+}
+
+pub fn set_ui_state(conn: &Connection, key: &str, value: &str) -> Result<()> {
+    put_setting(conn, &format!("ui.{key}"), value)
+}
+
 /// Random secret the browser extension must send. Created on first use.
 pub fn extension_token(conn: &Connection) -> Result<String> {
     if let Some(t) = setting(conn, "ext_token")? {
@@ -192,6 +201,7 @@ pub struct ElementFull {
     pub ancestors: Vec<Crumb>,
     pub pinned: bool,
     pub needs_work: bool,
+    pub tags: Vec<String>,
 }
 
 #[derive(Serialize, Debug)]
@@ -532,6 +542,33 @@ fn priority_of(conn: &Connection, id: i64) -> Result<f64> {
     conn.query_row("SELECT priority FROM element WHERE id=?1", [id], |r| r.get(0)).map_err(e)
 }
 
+/// First due day for new material: tomorrow, unless tomorrow is already over
+/// the daily budget; then the least loaded of the next three days. Keeps the
+/// forecast flat instead of fixing a pile-up with Mercy afterwards.
+fn smooth_due(conn: &Connection, table: &str, day: i64) -> Result<i64> {
+    let s = get_settings(conn)?;
+    let budget = if table == "item" { s.item_budget } else { s.topic_budget };
+    let load = |d: i64| -> Result<i64> {
+        conn.query_row(
+            &format!("SELECT COUNT(*) FROM {table} x JOIN element e ON e.id = x.element_id WHERE e.status='active' AND x.due_day = ?1"),
+            [d],
+            |r| r.get(0),
+        )
+        .map_err(e)
+    };
+    if load(day + 1)? < budget {
+        return Ok(day + 1);
+    }
+    let mut best = (day + 1, i64::MAX);
+    for d in day + 1..=day + 3 {
+        let n = load(d)?;
+        if n < best.1 {
+            best = (d, n);
+        }
+    }
+    Ok(best.0)
+}
+
 /// New extract: a child topic that inherits its parent's priority and comes back tomorrow.
 pub fn create_extract(conn: &Connection, parent: i64, title: &str, doc_json: &str, day: i64) -> Result<i64> {
     let title = if title.trim().is_empty() { short_title(&doc_text(doc_json)) } else { title.trim().to_string() };
@@ -539,7 +576,7 @@ pub fn create_extract(conn: &Connection, parent: i64, title: &str, doc_json: &st
     let priority = priority_of(conn, id)?;
     conn.execute(
         "INSERT INTO topic (element_id, doc_json, afactor, interval_days, due_day) VALUES (?1,?2,?3,1,?4)",
-        params![id, doc_json, initial_afactor(doc_text(doc_json).len(), priority), day + 1],
+        params![id, doc_json, initial_afactor(doc_text(doc_json).len(), priority), smooth_due(conn, "topic", day)?],
     )
     .map_err(e)?;
     simple_log(conn, id, day, "create", Some(1))?;
@@ -554,7 +591,7 @@ pub fn create_item(conn: &Connection, parent: Option<i64>, item_type: &str, ques
     let id = insert_element(conn, "item", parent, &short_title(&doc_text(question)), place, "active")?;
     conn.execute(
         "INSERT INTO item (element_id, item_type, question, answer, due_day) VALUES (?1,?2,?3,?4,?5)",
-        params![id, item_type, question, answer, day + 1],
+        params![id, item_type, question, answer, smooth_due(conn, "item", day)?],
     )
     .map_err(e)?;
     simple_log(conn, id, day, "create", Some(1))?;
@@ -998,6 +1035,17 @@ pub struct SourceYield {
     pub title: String,
     pub extracts: i64,
     pub items: i64,
+    /// Minutes spent reading and reviewing this branch (where timed).
+    pub minutes: f64,
+}
+
+#[derive(Serialize, Debug, Default)]
+pub struct BandRetention {
+    pub label: String,
+    /// Desired retention at the band's middle.
+    pub target: f64,
+    pub actual: Option<f64>,
+    pub reviews: i64,
 }
 
 #[derive(Serialize, Debug, Default)]
@@ -1013,6 +1061,13 @@ pub struct FullStats {
     pub mature_reviews: i64,
     pub protection: Vec<ProtectionBand>,
     pub sources: Vec<SourceYield>,
+    /// Average seconds per timed item review / topic read, last 30 days.
+    pub seconds_per_review: Option<f64>,
+    pub seconds_per_read: Option<f64>,
+    /// Retention calibration: mature-review pass rate per priority band, vs. the target.
+    pub retention_by_band: Vec<BandRetention>,
+    /// Items that cost the most time (total seconds, all time).
+    pub costly: Vec<CostlyItem>,
     pub by_status: Vec<(String, i64)>,
     pub training_samples: usize,
     pub optimized: bool,
@@ -1094,7 +1149,7 @@ pub fn full_stats(conn: &Connection, day: i64) -> Result<FullStats> {
             )
             .map_err(e)?;
         s.sources = stmt
-            .query_map([], |r| Ok(SourceYield { id: r.get(0)?, title: r.get(1)?, extracts: r.get(2)?, items: r.get(3)? }))
+            .query_map([], |r| Ok(SourceYield { id: r.get(0)?, title: r.get(1)?, extracts: r.get(2)?, items: r.get(3)?, minutes: 0.0 }))
             .map_err(e)?
             .collect::<rusqlite::Result<Vec<_>>>()
             .map_err(e)?;
@@ -1105,6 +1160,58 @@ pub fn full_stats(conn: &Connection, day: i64) -> Result<FullStats> {
     }
     s.training_samples = training_samples(conn)?;
     s.optimized = setting(conn, "fsrs_params")?.is_some();
+    let avg = |kind: &str| -> Result<Option<f64>> {
+        conn.query_row(
+            "SELECT AVG(duration_ms) / 1000.0 FROM review_log WHERE kind=?1 AND duration_ms > 0 AND day > ?2 - 30",
+            params![kind, day],
+            |r| r.get(0),
+        )
+        .map_err(e)
+    };
+    s.seconds_per_review = avg("grade")?;
+    s.seconds_per_read = avg("read")?;
+    let settings = get_settings(conn)?;
+    for (label, lo, hi) in [("top 10%", 0.0, 10.0), ("10–25%", 10.0, 25.0), ("25–50%", 25.0, 50.0), ("50–100%", 50.0, 100.01)] {
+        let (passed, total): (i64, i64) = conn
+            .query_row(
+                "SELECT COALESCE(SUM(l.grade > 1), 0), COUNT(*) FROM review_log l JOIN element e ON e.id = l.element_id
+                 WHERE l.kind='grade' AND l.elapsed_days >= 1 AND l.day > ?1 - 90 AND e.priority >= ?2 AND e.priority < ?3",
+                params![day, lo, hi],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .map_err(e)?;
+        s.retention_by_band.push(BandRetention {
+            label: label.into(),
+            target: settings.retention_for((lo + f64::min(hi, 100.0)) / 2.0),
+            actual: (total > 0).then(|| passed as f64 / total as f64),
+            reviews: total,
+        });
+    }
+    {
+        let mut stmt = conn
+            .prepare(
+                "SELECT e.id, e.title, SUM(l.duration_ms) / 1000.0, COALESCE(i.lapses, 0) FROM review_log l
+                 JOIN element e ON e.id = l.element_id JOIN item i ON i.element_id = e.id
+                 WHERE l.kind='grade' AND l.duration_ms > 0 AND e.status='active'
+                 GROUP BY e.id ORDER BY 3 DESC LIMIT 10",
+            )
+            .map_err(e)?;
+        s.costly = stmt
+            .query_map([], |r| Ok(CostlyItem { id: r.get(0)?, title: r.get(1)?, seconds: r.get(2)?, lapses: r.get(3)? }))
+            .map_err(e)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(e)?;
+    }
+    for src in s.sources.iter_mut() {
+        src.minutes = conn
+            .query_row(
+                "WITH RECURSIVE down(id) AS (SELECT ?1 UNION ALL SELECT c.id FROM element c JOIN down ON c.parent_id = down.id)
+                 SELECT COALESCE(SUM(duration_ms), 0) / 60000.0 FROM review_log WHERE element_id IN (SELECT id FROM down)",
+                [src.id],
+                |r| r.get(0),
+            )
+            .map_err(e)?;
+    }
     Ok(s)
 }
 
@@ -1261,6 +1368,7 @@ pub fn training_samples(conn: &Connection) -> Result<usize> {
 }
 
 struct ItemSched {
+    id: i64,
     stability: Option<f64>,
     difficulty: Option<f64>,
     last_day: Option<i64>,
@@ -1271,7 +1379,7 @@ fn item_sched(conn: &Connection, id: i64) -> Result<ItemSched> {
     conn.query_row(
         "SELECT i.stability, i.difficulty, i.last_day, e.priority FROM item i JOIN element e ON e.id=i.element_id WHERE i.element_id=?1",
         [id],
-        |r| Ok(ItemSched { stability: r.get(0)?, difficulty: r.get(1)?, last_day: r.get(2)?, priority: r.get(3)? }),
+        |r| Ok(ItemSched { id, stability: r.get(0)?, difficulty: r.get(1)?, last_day: r.get(2)?, priority: r.get(3)? }),
     )
     .map_err(e)
 }
@@ -1283,7 +1391,7 @@ fn next_states(conn: &Connection, f: &FSRS, s: &ItemSched, day: i64) -> Result<(
     };
     // Early (mid-interval) reviews pass the true elapsed time; FSRS accounts for it.
     let elapsed = s.last_day.map(|l| (day - l).max(0)).unwrap_or(0);
-    let retention = get_settings(conn)?.retention_for(s.priority) as f32;
+    let retention = (get_settings(conn)?.retention_for(s.priority)).max(cram_retention(conn, s.id, day)?) as f32;
     let states = f.next_states(memory, retention, elapsed as u32).map_err(e)?;
     Ok((states, elapsed))
 }
@@ -1405,6 +1513,42 @@ fn interleave(items: Vec<QueueEntry>, topics: Vec<QueueEntry>, per_topic: usize)
     out
 }
 
+// ---------- Exam (cram) mode ----------
+
+/// Higher target retention for one branch until a date (an exam).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct Cram {
+    pub root: i64,
+    pub title: String,
+    pub retention: f64,
+    /// Last learning day it applies to.
+    pub until: i64,
+}
+
+pub fn get_cram(conn: &Connection) -> Result<Vec<Cram>> {
+    Ok(setting(conn, "cram")?.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default())
+}
+
+pub fn set_cram(conn: &Connection, list: &[Cram], day: i64) -> Result<()> {
+    let kept: Vec<Cram> = list
+        .iter()
+        .filter(|c| c.until >= day)
+        .map(|c| Cram { retention: c.retention.clamp(0.7, 0.99), ..c.clone() })
+        .collect();
+    put_setting(conn, "cram", &serde_json::to_string(&kept).map_err(e)?)
+}
+
+/// The highest exam retention that covers `id` today (0 if none).
+fn cram_retention(conn: &Connection, id: i64, day: i64) -> Result<f64> {
+    let mut best: f64 = 0.0;
+    for c in get_cram(conn)? {
+        if c.until >= day && c.retention > best && is_descendant_or_self(conn, id, c.root)? {
+            best = c.retention;
+        }
+    }
+    Ok(best)
+}
+
 // ---------- Queue ----------
 
 /// Today's queue. The first call of a learning day runs auto-postpone.
@@ -1417,7 +1561,28 @@ pub fn queue(conn: &Connection, day: i64) -> Result<QueueResult> {
     } else {
         None
     };
-    Ok(QueueResult { entries: to_entries(select_active(conn, None, Some(day))?), auto_postponed })
+    Ok(QueueResult { entries: to_entries(space_siblings(conn, select_active(conn, None, Some(day))?)?), auto_postponed })
+}
+
+/// One item per parent per day (the most important): siblings made from the
+/// same passage give each other's answers away. The rest stay due and come
+/// up on the following days. Subset reviews don't do this.
+fn space_siblings(conn: &Connection, rows: Vec<DueRow>) -> Result<Vec<DueRow>> {
+    let mut stmt = conn.prepare("SELECT parent_id FROM element WHERE id=?1").map_err(e)?;
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::with_capacity(rows.len());
+    for r in rows {
+        if r.kind == "item" {
+            let parent: Option<i64> = stmt.query_row([r.id], |x| x.get(0)).map_err(e)?;
+            if let Some(p) = parent {
+                if !seen.insert(p) {
+                    continue;
+                }
+            }
+        }
+        out.push(r);
+    }
+    Ok(out)
 }
 
 /// Review a given set (e.g. search results), in priority order.
@@ -1606,6 +1771,7 @@ pub fn get_element(conn: &Connection, id: i64) -> Result<ElementFull> {
                     ancestors: Vec::new(),
                     pinned: r.get(8)?,
                     needs_work: r.get(9)?,
+                    tags: Vec::new(),
                 })
             },
         )
@@ -1671,6 +1837,7 @@ pub fn get_element(conn: &Connection, id: i64) -> Result<ElementFull> {
         .map_err(e)?;
     el.reference = reference(conn, id)?;
     el.ancestors = ancestors(conn, id)?;
+    el.tags = tags_of(conn, id)?;
     Ok(el)
 }
 
@@ -1812,6 +1979,9 @@ pub struct BrowseRow {
     pub stability: Option<f64>,
     /// Topics only.
     pub afactor: Option<f64>,
+    /// Items: predicted recall today (FSRS).
+    pub retrievability: Option<f64>,
+    pub tags: Vec<String>,
     pub text_len: i64,
     pub children: i64,
     pub pinned: bool,
@@ -1821,7 +1991,9 @@ pub struct BrowseRow {
 }
 
 /// Every element (inbox included) for the browser; filtering happens in the UI.
-pub fn browse_rows(conn: &Connection) -> Result<Vec<BrowseRow>> {
+pub fn browse_rows(conn: &Connection, day: i64) -> Result<Vec<BrowseRow>> {
+    let decay = fsrs_params(conn)?[20] as f64;
+    let factor = 0.9f64.powf(-1.0 / decay) - 1.0;
     let mut stmt = conn
         .prepare(
             "SELECT e.id, e.parent_id, e.kind,
@@ -1834,7 +2006,8 @@ pub fn browse_rows(conn: &Connection) -> Result<Vec<BrowseRow>> {
                     COALESCE(i.reps, (SELECT COUNT(*) FROM review_log l WHERE l.element_id = e.id AND l.kind = 'read')),
                     COALESCE(i.lapses, 0), i.stability, COALESCE(t.text_len, 0),
                     (SELECT COUNT(*) FROM element c WHERE c.parent_id = e.id),
-                    e.pinned != 0, e.needs_work != 0, e.created_at, e.updated_at, t.afactor
+                    e.pinned != 0, e.needs_work != 0, e.created_at, e.updated_at, t.afactor,
+                    (SELECT group_concat(g.name, char(31)) FROM element_tag et JOIN tag g ON g.id = et.tag_id WHERE et.element_id = e.id)
              FROM element e
              LEFT JOIN topic t ON t.element_id = e.id
              LEFT JOIN item  i ON i.element_id = e.id
@@ -1865,12 +2038,146 @@ pub fn browse_rows(conn: &Connection) -> Result<Vec<BrowseRow>> {
                 created_at: r.get(18)?,
                 updated_at: r.get(19)?,
                 afactor: r.get(20)?,
+                tags: r.get::<_, Option<String>>(21)?.map(|t| t.split('\u{1f}').map(String::from).collect()).unwrap_or_default(),
+                retrievability: None,
             })
         })
         .map_err(e)?
         .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(e)?;
+    let mut rows = rows;
+    for r in rows.iter_mut() {
+        if let (Some(st), Some(last)) = (r.stability, r.last_day) {
+            let t = (day - last).max(0) as f64;
+            r.retrievability = Some((1.0 + factor * t / st.max(0.01)).powf(-decay));
+        }
+    }
+    Ok(rows)
+}
+
+// ---------- Tags ----------
+
+pub fn tags_of(conn: &Connection, id: i64) -> Result<Vec<String>> {
+    let mut stmt = conn
+        .prepare("SELECT g.name FROM element_tag et JOIN tag g ON g.id = et.tag_id WHERE et.element_id=?1 ORDER BY g.name")
+        .map_err(e)?;
+    let v = stmt.query_map([id], |r| r.get(0)).map_err(e)?.collect::<rusqlite::Result<Vec<String>>>().map_err(e);
+    v
+}
+
+/// Replace an element's tags. Unused tags are removed.
+pub fn set_tags(conn: &Connection, id: i64, names: &[String]) -> Result<()> {
+    conn.execute("DELETE FROM element_tag WHERE element_id=?1", [id]).map_err(e)?;
+    for n in names {
+        let n = n.trim().trim_start_matches('#');
+        if n.is_empty() {
+            continue;
+        }
+        conn.execute("INSERT INTO tag (name) VALUES (?1) ON CONFLICT(name) DO NOTHING", [n]).map_err(e)?;
+        conn.execute("INSERT OR IGNORE INTO element_tag (element_id, tag_id) SELECT ?1, id FROM tag WHERE name = ?2", params![id, n]).map_err(e)?;
+    }
+    conn.execute("DELETE FROM tag WHERE id NOT IN (SELECT tag_id FROM element_tag)", []).map_err(e)?;
+    touch(conn, id)
+}
+
+/// Add (or remove) one tag on many elements.
+pub fn tag_many(conn: &Connection, ids: &[i64], name: &str, add: bool) -> Result<()> {
+    for &id in ids {
+        let mut t = tags_of(conn, id)?;
+        t.retain(|x| !x.eq_ignore_ascii_case(name));
+        if add {
+            t.push(name.to_string());
+        }
+        set_tags(conn, id, &t)?;
+    }
+    Ok(())
+}
+
+/// All tags with how many elements carry each.
+pub fn all_tags(conn: &Connection) -> Result<Vec<(String, i64)>> {
+    let mut stmt = conn
+        .prepare("SELECT g.name, COUNT(*) FROM tag g JOIN element_tag et ON et.tag_id = g.id GROUP BY g.id ORDER BY g.name")
+        .map_err(e)?;
+    let v = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).map_err(e)?.collect::<rusqlite::Result<Vec<_>>>().map_err(e);
+    v
+}
+
+// ---------- Reading and review helpers ----------
+
+/// Time spent on the latest log entry of `id` (the read or grade just made).
+pub fn set_last_duration(conn: &Connection, id: i64, ms: i64) -> Result<()> {
+    conn.execute(
+        "UPDATE review_log SET duration_ms = ?2 WHERE id = (SELECT MAX(id) FROM review_log WHERE element_id = ?1 AND kind IN ('grade','read'))",
+        params![id, ms.clamp(0, 30 * 60 * 1000)],
+    )
+    .map_err(e)?;
+    Ok(())
+}
+
+#[derive(Serialize, Debug)]
+pub struct Started {
+    pub id: i64,
+    pub title: String,
+    pub priority: f64,
+    pub due_day: i64,
+    /// "text", "pdf" or "video", and where the reader is in it.
+    pub kind: String,
+    pub progress: Option<f64>,
+}
+
+/// Topics already started (read point, PDF page or video position set):
+/// the "Continue reading" list, most important first.
+pub fn continue_reading(conn: &Connection, limit: i64) -> Result<Vec<Started>> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT e.id, e.title, e.priority, t.due_day,
+                    CASE WHEN t.pdf_asset IS NOT NULL THEN 'pdf' WHEN t.video_id IS NOT NULL THEN 'video' ELSE 'text' END,
+                    CASE WHEN t.pdf_asset IS NULL AND t.video_id IS NULL AND length(t.doc_json) > 0
+                         THEN MIN(1.0, t.read_point * 1.0 / MAX(1, t.text_len + 2 * (length(t.doc_json) - t.text_len) / 40)) END
+             FROM element e JOIN topic t ON t.element_id = e.id
+             WHERE e.status = 'active' AND t.text_len > 0
+               AND (t.read_point > 1 OR t.pdf_page > 1 OR t.video_pos > 5)
+             ORDER BY e.prank LIMIT ?1",
+        )
+        .map_err(e)?;
+    let v = stmt
+        .query_map([limit], |r| Ok(Started { id: r.get(0)?, title: r.get(1)?, priority: r.get(2)?, due_day: r.get(3)?, kind: r.get(4)?, progress: r.get(5)? }))
+        .map_err(e)?
+        .collect::<rusqlite::Result<Vec<_>>>()
         .map_err(e);
-    rows
+    v
+}
+
+/// Priority audit: important topics nobody has touched in a long time.
+/// Audited elements ("still important") stay off the list for 90 days.
+pub fn priority_audit(conn: &Connection, day: i64) -> Result<Vec<Anchor>> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT e.id, e.title, e.priority FROM element e JOIN topic t ON t.element_id = e.id
+             WHERE e.status = 'active' AND t.text_len > 0 AND e.priority < 15
+               AND COALESCE(t.last_day, e.created_at / 86400) < ?1 - 45
+               AND NOT EXISTS (SELECT 1 FROM review_log l WHERE l.element_id = e.id AND l.kind = 'audit' AND l.day > ?1 - 90)
+             ORDER BY e.prank LIMIT 10",
+        )
+        .map_err(e)?;
+    let v = stmt
+        .query_map([day], |r| Ok(Anchor { id: r.get(0)?, title: r.get(1)?, priority: r.get(2)? }))
+        .map_err(e)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(e);
+    v
+}
+
+pub fn mark_audited(conn: &Connection, id: i64, day: i64) -> Result<()> {
+    simple_log(conn, id, day, "audit", None)
+}
+
+#[derive(Serialize, Debug)]
+pub struct CostlyItem {
+    pub id: i64,
+    pub title: String,
+    pub seconds: f64,
+    pub lapses: i64,
 }
 
 pub fn tree(conn: &Connection) -> Result<Vec<TreeNode>> {
@@ -1932,6 +2239,7 @@ const SNAP_TABLES: &[(&str, &str)] = &[
     ("topic_archive", "element_id"),
     ("pdf_mark", "element_id"),
     ("pdf_mark", "child_id"),
+    ("element_tag", "element_id"),
 ];
 
 fn to_json(v: rusqlite::types::ValueRef) -> Value {
@@ -2156,10 +2464,11 @@ mod tests {
         let high = import(&c, "high", 5.0, 100);
         let items: Vec<i64> = (0..5).map(|n| item(&c, high, &format!("q{n}"), 99)).collect();
         let ids: Vec<i64> = queue(&c, 100).unwrap().entries.iter().map(|x| x.id).collect();
-        // Each new item enters right after its parent, so the newest comes first.
-        assert_eq!(ids, vec![items[4], items[3], items[2], items[1], high, items[0], low]);
+        // Each new item enters right after its parent, so the newest comes first;
+        // siblings are spaced out, so only one of the five shows up today.
+        assert_eq!(ids, vec![items[4], high, low]);
         dismiss(&c, low, 100).unwrap();
-        assert_eq!(queue(&c, 100).unwrap().entries.len(), 6);
+        assert_eq!(queue(&c, 100).unwrap().entries.len(), 2);
     }
 
     #[test]
@@ -2556,7 +2865,7 @@ mod tests {
         let src = import(&c, "Src", 10.0, 100);
         topic_read(&c, src, 100).unwrap();
         let it = item(&c, src, "q [...]", 100);
-        let rows = browse_rows(&c).unwrap();
+        let rows = browse_rows(&c, 100).unwrap();
         let s = rows.iter().find(|r| r.id == src).unwrap();
         assert_eq!((s.subtype.as_str(), s.reps, s.children), ("text", 1, 1));
         let i = rows.iter().find(|r| r.id == it).unwrap();
@@ -2564,8 +2873,56 @@ mod tests {
         set_afactor(&c, src, 9.0).unwrap();
         assert_eq!(get_element(&c, src).unwrap().topic.unwrap().afactor, 5.0);
         assert!(set_afactor(&c, it, 2.0).is_err());
-        assert_eq!(browse_rows(&c).unwrap().iter().find(|r| r.id == src).unwrap().afactor, Some(5.0));
+        assert_eq!(browse_rows(&c, 100).unwrap().iter().find(|r| r.id == src).unwrap().afactor, Some(5.0));
         // Queue order: the child follows its parent.
         assert!(rows.iter().position(|r| r.id == src) < rows.iter().position(|r| r.id == it));
+    }
+
+    #[test]
+    fn tags_cram_siblings_and_helpers() {
+        let c = db::open_in_memory().unwrap();
+        let f = fsrs();
+        let src = import(&c, "Heart", 10.0, 100);
+        let a = item(&c, src, "a [...]", 100);
+        let b = item(&c, src, "b [...]", 100);
+        // Siblings: only one per parent in today's queue; a subset review shows both.
+        let q: Vec<i64> = queue(&c, 101).unwrap().entries.iter().filter(|e| e.kind == "item").map(|e| e.id).collect();
+        assert_eq!(q.len(), 1);
+        assert_eq!(branches_queue(&c, &[src], true, 101).unwrap().iter().filter(|e| e.kind == "item").count(), 2);
+
+        set_tags(&c, a, &["cardio".into(), "#exam".into()]).unwrap();
+        assert_eq!(tags_of(&c, a).unwrap(), vec!["cardio", "exam"]);
+        tag_many(&c, &[a, b], "exam", false).unwrap();
+        assert_eq!(tags_of(&c, a).unwrap(), vec!["cardio"]);
+        assert_eq!(all_tags(&c).unwrap(), vec![("cardio".to_string(), 1)]);
+        assert_eq!(browse_rows(&c, 101).unwrap().iter().find(|r| r.id == a).unwrap().tags, vec!["cardio"]);
+
+        // Cram raises the target retention inside the branch only, until the date.
+        set_cram(&c, &[Cram { root: src, title: "Heart".into(), retention: 0.97, until: 110 }], 101).unwrap();
+        assert_eq!(cram_retention(&c, a, 105).unwrap(), 0.97);
+        assert_eq!(cram_retention(&c, a, 111).unwrap(), 0.0);
+        let normal = preview_item(&c, &f, a, 101).unwrap();
+        grade_item(&c, &f, a, 3, 101).unwrap();
+        set_last_duration(&c, a, 4200).unwrap();
+        let d: i64 = c.query_row("SELECT duration_ms FROM review_log WHERE element_id=?1 AND kind='grade'", [a], |r| r.get(0)).unwrap();
+        assert_eq!(d, 4200);
+        assert!(normal[2] >= 1);
+        let row = browse_rows(&c, 104).unwrap().into_iter().find(|r| r.id == a).unwrap();
+        let r = row.retrievability.unwrap();
+        assert!(r > 0.0 && r < 1.0);
+
+        // Continue reading and the priority audit.
+        save_topic(&c, src, &doc("Heart body text that is long enough"), Some(5)).unwrap();
+        assert_eq!(continue_reading(&c, 10).unwrap().iter().map(|s| s.id).collect::<Vec<_>>(), vec![src]);
+        assert!(priority_audit(&c, 101).unwrap().is_empty());
+        // Test days are small numbers; make the creation time match them.
+        c.execute("UPDATE element SET created_at = 100 * 86400", []).unwrap();
+        let late = priority_audit(&c, 400).unwrap();
+        assert_eq!(late.iter().map(|x| x.id).collect::<Vec<_>>(), vec![src]);
+        mark_audited(&c, src, 400).unwrap();
+        assert!(priority_audit(&c, 401).unwrap().is_empty());
+        let st = full_stats(&c, 101).unwrap();
+        assert_eq!(st.seconds_per_review, Some(4.2));
+        assert_eq!(st.retention_by_band.len(), 4);
     }
 }

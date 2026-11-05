@@ -40,6 +40,19 @@ export const VideoPanel = forwardRef<VideoHandle, Props>(function VideoPanel({ e
   const [now, setNow] = useState(resume);
   const [mark, setMark] = useState<number | null>(null);
   const lastSaved = useRef(resume);
+  const [rate, setRate] = useState(1);
+  /** Playback speed, remembered per video. */
+  const cycleRate = useCallback(() => {
+    const steps = [1, 1.25, 1.5, 1.75, 2];
+    const next = steps[(steps.indexOf(rate) + 1) % steps.length];
+    player.current?.setPlaybackRate?.(next);
+    setRate(next);
+    try {
+      localStorage.setItem(`ir.videoRate.${videoId}`, String(next));
+    } catch {
+      /* not remembered */
+    }
+  }, [rate, videoId]);
 
   const current = useCallback(() => {
     try {
@@ -78,7 +91,15 @@ export const VideoPanel = forwardRef<VideoHandle, Props>(function VideoPanel({ e
             origin: window.location.origin,
           },
           events: {
-            onReady: () => !cancelled && setReady(true),
+            onReady: () => {
+              if (cancelled) return;
+              setReady(true);
+              const saved = Number(localStorage.getItem(`ir.videoRate.${videoId}`) ?? "1");
+              if (saved && saved !== 1) {
+                player.current?.setPlaybackRate?.(saved);
+                setRate(saved);
+              }
+            },
             onError: (e: any) =>
               !cancelled &&
               setError(
@@ -164,12 +185,13 @@ export const VideoPanel = forwardRef<VideoHandle, Props>(function VideoPanel({ e
       if (k === "k") run(togglePlay);
       else if (k === "b") run(markStart);
       else if (k === "e") run(markEnd);
-      else if (k === "arrowleft") run(() => seek(current() - 10));
-      else if (k === "arrowright") run(() => seek(current() + 10));
+      else if (k === "j") run(() => seek(current() - 10));
+      else if (k === "l") run(() => seek(current() + 10));
+      else if (k === ".") run(cycleRate);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [current, markEnd, markStart, seek, togglePlay]);
+  }, [current, cycleRate, markEnd, markStart, seek, togglePlay]);
 
   return (
     <div className="video-panel">
@@ -186,8 +208,9 @@ export const VideoPanel = forwardRef<VideoHandle, Props>(function VideoPanel({ e
       </div>
       <div className="video-controls small">
         <button className="small-btn" onClick={togglePlay} disabled={!ready} title="Alt+K">⏯</button>
-        <button className="small-btn" onClick={() => seek(current() - 10)} disabled={!ready} title="Alt+←">−10s</button>
-        <button className="small-btn" onClick={() => seek(current() + 10)} disabled={!ready} title="Alt+→">+10s</button>
+        <button className="small-btn" onClick={() => seek(current() - 10)} disabled={!ready} title="Alt+J">−10s</button>
+        <button className="small-btn" onClick={() => seek(current() + 10)} disabled={!ready} title="Alt+L">+10s</button>
+        <button className="small-btn" onClick={cycleRate} disabled={!ready} title="Alt+. — speed (remembered for this video)">{rate}×</button>
         <span className="mono">{fmtTime(now)}</span>
         {clip && (
           <>

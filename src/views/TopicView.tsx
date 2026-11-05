@@ -90,6 +90,8 @@ function TextTopicView({ element, mode, onFinish, onOpen, onChanged, onDelete, o
   /** Set once the reader places a read point; otherwise one is placed automatically on leaving. */
   const explicitRp = useRef(false);
   const video = useRef<VideoHandle>(null);
+  /** For the time-per-read statistics. */
+  const openedAt = useRef(Date.now());
   const isVideo = !!topic.video_id;
   /** Image being occluded (stored src). */
   const [occluding, setOccluding] = useState<string | null>(null);
@@ -366,7 +368,7 @@ function TextTopicView({ element, mode, onFinish, onOpen, onChanged, onDelete, o
       try {
         if (outcome !== "done") autoReadPoint();
         await save();
-        if (outcome === "next") notify(`Next read in ${fmtDays(await api.topicRead(id))}`);
+        if (outcome === "next") notify(`Next read in ${fmtDays(await api.topicRead(id, Date.now() - openedAt.current))}`);
         else if (outcome === "done") {
           await api.done(id);
           notify("Done! — text removed, extracts kept", { undo: true });

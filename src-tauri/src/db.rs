@@ -167,7 +167,22 @@ ALTER TABLE topic ADD COLUMN video_end REAL;
 ALTER TABLE topic ADD COLUMN video_pos REAL;
 "#;
 
-pub const LATEST: i64 = 6;
+/// Schema version 7: time spent per review, and tags (concepts that cut across sources).
+const SCHEMA_V7: &str = r#"
+ALTER TABLE review_log ADD COLUMN duration_ms INTEGER;
+CREATE TABLE tag (
+  id    INTEGER PRIMARY KEY,
+  name  TEXT NOT NULL UNIQUE COLLATE NOCASE
+);
+CREATE TABLE element_tag (
+  element_id INTEGER NOT NULL REFERENCES element(id) ON DELETE CASCADE,
+  tag_id     INTEGER NOT NULL REFERENCES tag(id) ON DELETE CASCADE,
+  PRIMARY KEY (element_id, tag_id)
+);
+CREATE INDEX element_tag_tag ON element_tag(tag_id);
+"#;
+
+pub const LATEST: i64 = 7;
 
 pub fn open(path: &std::path::Path) -> rusqlite::Result<(Connection, i64)> {
     let conn = Connection::open(path)?;
@@ -205,6 +220,9 @@ fn init(conn: &Connection) -> rusqlite::Result<i64> {
     }
     if version < 6 {
         conn.execute_batch(&format!("BEGIN; {SCHEMA_V6} PRAGMA user_version = 6; COMMIT;"))?;
+    }
+    if version < 7 {
+        conn.execute_batch(&format!("BEGIN; {SCHEMA_V7} PRAGMA user_version = 7; COMMIT;"))?;
     }
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
     Ok(version)

@@ -82,6 +82,7 @@ export interface ElementFull {
   ancestors: { id: number; title: string }[];
   pinned: boolean;
   needs_work: boolean;
+  tags: string[];
 }
 
 /** Items forgotten this many times are leeches: reformulate them. */
@@ -125,12 +126,32 @@ export interface BrowseRow {
   stability: number | null;
   /** Topics only. */
   afactor: number | null;
+  /** Items: predicted recall today. */
+  retrievability: number | null;
+  tags: string[];
   text_len: number;
   children: number;
   pinned: boolean;
   needs_work: boolean;
   created_at: number;
   updated_at: number;
+}
+
+export interface Cram {
+  root: number;
+  title: string;
+  retention: number;
+  /** Last learning day it applies to. */
+  until: number;
+}
+
+export interface Started {
+  id: number;
+  title: string;
+  priority: number;
+  due_day: number;
+  kind: "text" | "pdf" | "video";
+  progress: number | null;
 }
 
 export interface SessionSummary {
@@ -195,7 +216,11 @@ export interface FullStats {
   true_retention: number | null;
   mature_reviews: number;
   protection: { label: string; total: number; overdue: number }[];
-  sources: { id: number; title: string; extracts: number; items: number }[];
+  sources: { id: number; title: string; extracts: number; items: number; minutes: number }[];
+  seconds_per_review: number | null;
+  seconds_per_read: number | null;
+  retention_by_band: { label: string; target: number; actual: number | null; reviews: number }[];
+  costly: { id: number; title: string; seconds: number; lapses: number }[];
   by_status: [string, number][];
   training_samples: number;
   optimized: boolean;
@@ -234,7 +259,7 @@ export const api = {
   saveTopic: (id: number, docJson: string, readPoint: number | null) =>
     invoke<void>("save_topic", { id, docJson, readPoint }),
   saveItem: (id: number, question: string, answer: string) => invoke<void>("save_item", { id, question, answer }),
-  topicRead: (id: number) => invoke<number>("topic_read", { id }),
+  topicRead: (id: number, durationMs?: number) => invoke<number>("topic_read", { id, durationMs: durationMs ?? null }),
   reschedule: (id: number, days: number) => invoke<void>("reschedule", { id, days }),
   setPriority: (id: number, priority: number) => invoke<void>("set_priority", { id, priority }),
   setTitle: (id: number, title: string) => invoke<void>("set_title", { id, title }),
@@ -245,7 +270,7 @@ export const api = {
   getInbox: () => invoke<InboxEntry[]>("get_inbox"),
   deleteElement: (id: number) => invoke<void>("delete_element", { id }),
   previewItem: (id: number) => invoke<[number, number, number, number]>("preview_item", { id }),
-  gradeItem: (id: number, grade: 1 | 2 | 3 | 4) => invoke<number>("grade_item", { id, grade }),
+  gradeItem: (id: number, grade: 1 | 2 | 3 | 4, durationMs?: number) => invoke<number>("grade_item", { id, grade, durationMs: durationMs ?? null }),
   getQueue: () => invoke<QueueResult>("get_queue"),
   branchesQueue: (roots: number[], dueOnly: boolean) => invoke<QueueEntry[]>("branches_queue", { roots, dueOnly }),
   idsQueue: (ids: number[]) => invoke<QueueEntry[]>("ids_queue", { ids }),
@@ -285,6 +310,17 @@ export const api = {
   extensionInfo: () => invoke<{ port: number; token: string }>("extension_info"),
   backup: () => invoke<string>("backup"),
   dataDir: () => invoke<string>("data_dir"),
+  setTags: (id: number, tags: string[]) => invoke<void>("set_tags", { id, tags }),
+  tagMany: (ids: number[], tag: string, add: boolean) => invoke<void>("tag_many", { ids, tag, add }),
+  allTags: () => invoke<[string, number][]>("all_tags"),
+  getCram: () => invoke<Cram[]>("get_cram"),
+  setCram: (list: Cram[]) => invoke<void>("set_cram", { list }),
+  continueReading: () => invoke<Started[]>("continue_reading"),
+  priorityAudit: () => invoke<{ id: number; title: string; priority: number }[]>("priority_audit"),
+  markAudited: (id: number) => invoke<void>("mark_audited", { id }),
+  undoList: () => invoke<string[]>("undo_list"),
+  getUiState: (key: string) => invoke<string | null>("get_ui_state", { key }),
+  setUiState: (key: string, value: string) => invoke<void>("set_ui_state", { key, value }),
   setAfactor: (id: number, afactor: number) => invoke<void>("set_afactor", { id, afactor }),
   browseRows: () => invoke<BrowseRow[]>("browse_rows"),
   setFlag: (id: number, flag: "pinned" | "needs_work", value: boolean) => invoke<void>("set_flag", { id, flag, value }),
