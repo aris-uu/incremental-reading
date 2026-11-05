@@ -505,6 +505,14 @@ function JapaneseTab({ notify }: { notify: Notify }) {
           <input value={p.definitionMarker} placeholder="e.g. single-glossary-jitendexorg-2026-01-04 (optional)" onChange={(e) => set({ definitionMarker: e.target.value })} />
         </label>
         <label>
+          dictionary popup
+          <select value={p.hover} onChange={(e) => set({ hover: e.target.value as Prefs["hover"] })}>
+            <option value="shift">hold Shift over a word</option>
+            <option value="always">rest the mouse on a word</option>
+            <option value="off">off</option>
+          </select>
+        </label>
+        <label>
           mined cards go
           <select value={p.mineInto} onChange={(e) => set({ mineInto: e.target.value as Prefs["mineInto"] })}>
             <option value="source">under the article they came from</option>

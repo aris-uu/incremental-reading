@@ -16,11 +16,12 @@ import { fetchVideoInfo, youtubeId } from "./youtube";
 import { exportToAnki } from "./ankiExport";
 import { OcclusionDialog } from "./views/OcclusionDialog";
 import { BrowserView } from "./views/BrowserView";
+import { TexthookerView, useTexthooker } from "./views/TexthookerView";
 
 import { isTyping } from "./keys";
 
 /** What the reader pane shows. */
-type View = { kind: "learn" } | { kind: "inbox" } | { kind: "stats" } | { kind: "browse"; id: number } | { kind: "browser"; query: string };
+type View = { kind: "learn" } | { kind: "inbox" } | { kind: "hooker" } | { kind: "stats" } | { kind: "browse"; id: number } | { kind: "browser"; query: string };
 
 interface ExternalImport {
   title: string;
@@ -63,6 +64,13 @@ export default function App() {
   });
   const toastTimer = useRef<number | undefined>(undefined);
   const session = useLearnSession();
+  /** Texthooker: keeps receiving lines while you use the rest of the app. */
+  const appendedTimer = useRef<number | undefined>(undefined);
+  const hooker = useTexthooker(() => {
+    // Refresh the tree at most every few seconds while lines stream in.
+    window.clearTimeout(appendedTimer.current);
+    appendedTimer.current = window.setTimeout(() => setVersion((v) => v + 1), 3000);
+  });
   const sessionRef = useRef(session);
   sessionRef.current = session;
 
@@ -304,6 +312,7 @@ export default function App() {
   const commands: Command[] = [
     { label: "Learn: today's queue", hint: "Ctrl+L", run: learn },
     { label: "Inbox", run: () => setView({ kind: "inbox" }) },
+    { label: "Texthooker", run: () => setView({ kind: "hooker" }) },
     { label: "Browser: priority queue", hint: "Ctrl+Shift+B", run: () => browser("is:active") },
     { label: "Browser: due today", run: () => browser("is:due") },
     { label: "Browser: leeches", run: () => browser("is:leech") },
@@ -359,6 +368,9 @@ export default function App() {
         <button onClick={doImport} title="Opens the import window (Ctrl+N)">Import</button>
         <button onClick={newTopic} title="New topic: a note, or a root to organize under">New topic</button>
         <button onClick={newItem} title="New Q&A item (Ctrl+Shift+N)">New item</button>
+        <button className={view.kind === "hooker" ? "active" : ""} onClick={() => setView({ kind: "hooker" })} title="Texthooker: lines from a visual novel, written into a topic">
+          Hooker <span className={`dot ${hooker.status}`} />
+        </button>
         <button className={view.kind === "browser" ? "active" : ""} onClick={() => browser()} title="Search, filter and act on everything (Ctrl+Shift+B)">
           Browser
         </button>
@@ -397,6 +409,7 @@ export default function App() {
               onOverload={() => setToolsOpen(true)}
             />
           )}
+          {view.kind === "hooker" && <TexthookerView hooker={hooker} notify={notify} onOpen={open} />}
           {view.kind === "stats" && <StatsView version={version} onOpen={open} />}
           {view.kind === "browser" && stats && (
             <BrowserView

@@ -54,28 +54,39 @@ export function sentenceHtml(sentence: string, start: number, end: number) {
 
 /**
  * Look a word up through the Yomitan API (yomitan-api) and return Senren
- * fields. Audio and dictionary images are stored in the collection.
+ * fields for the best entry. With `media`, audio and dictionary images are
+ * stored in the collection (do that only when making a card).
  */
-export async function yomitanFields(text: string): Promise<Fields | null> {
+export async function yomitanFields(text: string, media = true): Promise<Fields | null> {
+  return (await yomitanEntries(text, 1, media))[0] ?? null;
+}
+
+/**
+ * Up to `max` entries for text that starts at the cursor (Yomitan scans for
+ * the longest match). Each has Senren fields plus `match`, the source text
+ * that matched (e.g. 飲んだ for 飲む).
+ */
+export async function yomitanEntries(text: string, max = 3, media = false): Promise<Fields[]> {
   const prefs = loadPrefs();
-  if (!prefs.yomitanUrl) return null;
-  const markers = { ...MARKERS };
+  if (!prefs.yomitanUrl) throw new Error("Yomitan API is off (Tools → Japanese & Yomitan)");
+  const markers: Record<string, string> = { ...MARKERS, match: "cloze-body" };
   if (prefs.definitionMarker.trim()) markers.definition = prefs.definitionMarker.trim().replace(/[{}]/g, "");
   const res: any = await api.yomitanApi(prefs.yomitanUrl, "ankiFields", {
     text,
     type: "term",
     markers: [...new Set(Object.values(markers))],
-    maxEntries: 1,
-    includeMedia: true,
+    maxEntries: max,
+    includeMedia: media,
   });
-  const entry = res?.fields?.[0];
-  if (!entry) return null;
-  for (const m of [...(res.audioMedia ?? []), ...(res.dictionaryMedia ?? [])]) {
-    if (m?.ankiFilename && m?.content) await api.saveMedia(m.ankiFilename, m.content);
-  }
-  const out: Fields = {};
-  for (const [field, marker] of Object.entries(markers)) if (typeof entry[marker] === "string") out[field] = entry[marker];
-  return out;
+  if (media)
+    for (const m of [...(res?.audioMedia ?? []), ...(res?.dictionaryMedia ?? [])]) {
+      if (m?.ankiFilename && m?.content) await api.saveMedia(m.ankiFilename, m.content);
+    }
+  return (res?.fields ?? []).map((entry: any) => {
+    const out: Fields = {};
+    for (const [field, marker] of Object.entries(markers)) if (typeof entry[marker] === "string") out[field] = entry[marker];
+    return out;
+  });
 }
 
 /** Yomitan API reachable? Returns its version or throws. */

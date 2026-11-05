@@ -10,7 +10,7 @@ interface Props {
   start: number;
   end: number;
   /** Topic it was mined from (the card goes under it, keeping the source). */
-  sourceId: number;
+  sourceId: number | null;
   sourceTitle: string;
   onClose: () => void;
   onCreated: (id: number) => void;

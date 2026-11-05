@@ -550,6 +550,11 @@ fn set_ankiconnect(state: State<AppState>, port: u16, key: Option<String>) -> Re
 }
 
 #[tauri::command]
+fn append_lines(state: State<AppState>, id: i64, lines: Vec<String>, heading: Option<String>) -> Result<i64> {
+    with(&state, |c| engine::append_lines(c, id, &lines, heading.as_deref()))
+}
+
+#[tauri::command]
 fn set_flag(state: State<AppState>, id: i64, flag: String, value: bool) -> Result<()> {
     with(&state, |c| engine::set_flag(c, id, &flag, value))
 }
@@ -675,6 +680,7 @@ pub fn run() {
             backup,
             data_dir,
             set_flag,
+            append_lines,
             create_sentence,
             update_sentence,
             ensure_deck,

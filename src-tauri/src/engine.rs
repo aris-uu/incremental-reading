@@ -607,6 +607,28 @@ pub fn save_topic(conn: &Connection, id: i64, doc_json: &str, read_point: Option
     index(conn, id)
 }
 
+/// Append lines to a topic as paragraphs (texthooker), atomically in the core
+/// so lines arriving quickly can't overwrite each other. A `heading` line
+/// (e.g. the session date) can come first. Returns the new text length.
+pub fn append_lines(conn: &Connection, id: i64, lines: &[String], heading: Option<&str>) -> Result<i64> {
+    let doc: String = conn.query_row("SELECT doc_json FROM topic WHERE element_id=?1", [id], |r| r.get(0)).map_err(e)?;
+    let mut v: Value = serde_json::from_str(&doc).unwrap_or_else(|_| serde_json::json!({ "type": "doc", "content": [] }));
+    let content = v.get_mut("content").and_then(Value::as_array_mut).ok_or("bad document")?;
+    // Drop a lone empty paragraph (a new, empty topic).
+    if content.len() == 1 && content[0].get("content").is_none() && content[0]["type"] == "paragraph" {
+        content.clear();
+    }
+    if let Some(h) = heading.filter(|h| !h.trim().is_empty()) {
+        content.push(serde_json::json!({ "type": "heading", "attrs": { "level": 3 }, "content": [{ "type": "text", "text": h.trim() }] }));
+    }
+    for l in lines.iter().map(|l| l.trim()).filter(|l| !l.is_empty()) {
+        content.push(serde_json::json!({ "type": "paragraph", "content": [{ "type": "text", "text": l }] }));
+    }
+    let rp: Option<i64> = conn.query_row("SELECT read_point FROM topic WHERE element_id=?1", [id], |r| r.get(0)).map_err(e)?;
+    save_topic(conn, id, &v.to_string(), rp)?;
+    conn.query_row("SELECT text_len FROM topic WHERE element_id=?1", [id], |r| r.get(0)).map_err(e)
+}
+
 /// Save an item's question and answer. The title follows the question unless
 /// the user has renamed it.
 pub fn save_item(conn: &Connection, id: i64, question: &str, answer: &str) -> Result<()> {
@@ -2969,5 +2991,19 @@ mod tests {
         // Most important first: it gets the earlier day.
         let (first, second) = if priority_of(&c, a).unwrap() < priority_of(&c, b).unwrap() { (a, b) } else { (b, a) };
         assert_eq!((due(first), due(second)), (100, 101));
+    }
+
+    #[test]
+    fn append_lines_to_topic() {
+        let c = db::open_in_memory().unwrap();
+        let t = create_topic(&c, None, "VN", EMPTY_DOC, 100).unwrap();
+        append_lines(&c, t, &["「おはよう」".into(), "  ".into()], Some("Session 1")).unwrap();
+        let n = append_lines(&c, t, &["二行目".into()], None).unwrap();
+        let doc: Value = serde_json::from_str(&get_element(&c, t).unwrap().topic.unwrap().doc_json).unwrap();
+        let kinds: Vec<&str> = doc["content"].as_array().unwrap().iter().map(|n| n["type"].as_str().unwrap()).collect();
+        assert_eq!(kinds, vec!["heading", "paragraph", "paragraph"]);
+        assert!(n > 0);
+        // It now has text, so it can come up in the queue like any article.
+        assert!(tree(&c).unwrap().iter().any(|n| n.id == t && !n.empty));
     }
 }

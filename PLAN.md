@@ -433,6 +433,19 @@ The aim is more retained knowledge per minute, not more reviews. Each idea below
   - The card goes under the article it came from, and the word gets a link mark back to the card. Alternatively it can go into a fixed deck.
 - **Frequency-ordered learning:** `freqSort` (Yomitan's harmonic frequency rank) sets the card's place in the priority queue, so common words come first. Senren's "sort new cards by frequency" happens automatically.
 
+### Built (round 2)
+- **Hover dictionary:**
+  - Hold Shift over a word (or just rest the mouse, per the setting) in the reader or the texthooker. The text from the cursor goes to the Yomitan API (`/ankiFields` with `cloze-body`), which finds the longest match; that word is highlighted in the text.
+  - The popup shows up to 3 entries with reading, pitch, frequency and gloss.
+  - **＋** makes a sentence card from the sentence under the cursor, with the audio stored. In the reader, the word gets a link mark back to the card.
+- **Texthooker** (top bar → Hooker):
+  - The app connects as a client to the hook's WebSocket (`ws://localhost:6677` by default, the same one texthooker UIs use with Textractor's WebSocket extension, LunaTranslator or agent). JSON messages (`{sentence}`, `{text}`) are understood as well as plain text.
+  - Lines are shown big, de-duplicated and auto-scrolled, and each one is **written into a topic** "VN › Route" (created on the fly, nesting with `::`). A timestamped heading marks each session.
+  - Reading stats: characters, active time (pauses after 2 minutes idle) and characters per hour.
+  - Pause, hide a line, paste lines by hand.
+  - Hover lookup and Alt+S sentence cards work on the lines.
+  - It keeps running while you use the rest of the app, and the session topic becomes an ordinary article to reread, extract and mine from later.
+
 ### Workflow
 1. **Sources:**
    - **EPUB:** import it (chapters become topics), read incrementally with a read point, and mine with Alt+S. Yomitan's own popup isn't available inside the app; Alt+D takes its place.

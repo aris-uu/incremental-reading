@@ -313,6 +313,7 @@ export const api = {
   extensionInfo: () => invoke<{ port: number; token: string }>("extension_info"),
   backup: () => invoke<string>("backup"),
   dataDir: () => invoke<string>("data_dir"),
+  appendLines: (id: number, lines: string[], heading: string | null) => invoke<number>("append_lines", { id, lines, heading }),
   createSentence: (parentId: number | null, fields: Record<string, string>, tags: string[], priority: number | null) =>
     invoke<number>("create_sentence", { parentId, fields, tags, priority }),
   updateSentence: (id: number, fields: Record<string, string>) => invoke<void>("update_sentence", { id, fields }),

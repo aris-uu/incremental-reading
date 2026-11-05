@@ -14,6 +14,7 @@ import { VideoPanel, type VideoHandle } from "./VideoPanel";
 import { OcclusionDialog } from "./OcclusionDialog";
 import { AFactor } from "./AFactor";
 import { MineDialog } from "./MineDialog";
+import { LookupHover } from "../hover";
 import { renderField, sentenceAround, yomitanFields } from "../japanese";
 import { timeFromHref } from "../youtube";
 
@@ -596,6 +597,23 @@ function TextTopicView({ element, mode, onFinish, onOpen, onChanged, onDelete, o
       {isVideo && editor?.isEmpty && (
         <p className="muted small pad">No transcript. Watch, mark a start and an end to make clips, or paste a transcript here.</p>
       )}
+      <LookupHover
+        container={readerRef}
+        sourceId={id}
+        sourceTitle={element.title}
+        notify={notify}
+        onMined={(itemId, range) => {
+          if (!editor) return;
+          try {
+            const from = editor.view.posAtDOM(range.startContainer, range.startOffset);
+            const to = editor.view.posAtDOM(range.endContainer, range.endOffset);
+            if (to > from) editor.chain().setTextSelection({ from, to }).setMark("cloze", { id: itemId }).setTextSelection(to).run();
+          } catch {
+            /* the text moved; the card exists anyway */
+          }
+          onChanged?.();
+        }}
+      />
       {mining && (
         <MineDialog
           {...mining}

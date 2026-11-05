@@ -14,6 +14,10 @@ export interface Prefs {
   /** Where cards mined in the reader go: under the article, or into a deck (topic path). */
   mineInto: "source" | "deck";
   mineDeck: string;
+  /** Dictionary popup over text: hold Shift, just rest the mouse, or off. */
+  hover: "shift" | "always" | "off";
+  /** Texthooker WebSocket (Textractor/LunaTranslator/agent websocket plugins). */
+  hookerUrl: string;
 }
 
 const KEY = "ir.prefs";
@@ -26,6 +30,8 @@ const DEFAULTS: Prefs = {
   definitionMarker: "",
   mineInto: "source",
   mineDeck: "Japanese::Mining",
+  hover: "shift",
+  hookerUrl: "ws://localhost:6677",
 };
 
 export function loadPrefs(): Prefs {
