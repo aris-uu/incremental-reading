@@ -1,9 +1,58 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Notify } from "../notify";
-import { api, fmtDays, type ElementFull } from "../api";
+import { api, fmtDays, LEECH_LAPSES, type ElementFull } from "../api";
 import { RichField } from "../editor/RichField";
 import { ElementHeader } from "./ElementHeader";
 import { lintItem } from "../lint";
+import { parseDoc } from "../editor/extensions";
+
+/** Text of a ProseMirror node (JSON). */
+const nodeText = (n: any): string => (n.type === "text" ? n.text ?? "" : n.type?.startsWith("math") ? `$${n.attrs?.latex ?? ""}$` : (n.content ?? []).map(nodeText).join(""));
+const hasMark = (n: any, id: number): boolean =>
+  (n.marks ?? []).some((m: any) => (m.type === "cloze" || m.type === "extract") && m.attrs?.id === id) || (n.content ?? []).some((c: any) => hasMark(c, id));
+
+/**
+ * The passage an item came from: the parent's paragraph that holds this
+ * item's cloze mark, with its neighbours; or the start of the parent's text.
+ */
+function sourceContext(parentDoc: string, itemId: number): { before: string; hit: string; after: string } | null {
+  const blocks: any[] = [];
+  const walk = (n: any) => (n.content?.some((c: any) => c.type === "text" || c.type?.startsWith("math")) ? blocks.push(n) : (n.content ?? []).forEach(walk));
+  walk(parseDoc(parentDoc));
+  if (!blocks.length) return null;
+  const i = blocks.findIndex((b) => hasMark(b, itemId));
+  if (i < 0) return { before: "", hit: blocks.slice(0, 2).map(nodeText).join(" ").slice(0, 700), after: "" };
+  return { before: i > 0 ? nodeText(blocks[i - 1]) : "", hit: nodeText(blocks[i]), after: i + 1 < blocks.length ? nodeText(blocks[i + 1]) : "" };
+}
+
+/** Collapsed drawer on the answer side: the surrounding text in the source. */
+function ContextDrawer({ element }: { element: ElementFull }) {
+  const [ctx, setCtx] = useState<ReturnType<typeof sourceContext> | undefined>(undefined);
+  const load = () => {
+    if (ctx !== undefined || element.parent_id == null) return;
+    api
+      .getElement(element.parent_id)
+      .then((p) => setCtx(p.topic ? sourceContext(p.topic.doc_json, element.id) : null))
+      .catch(() => setCtx(null));
+  };
+  if (element.parent_id == null) return null;
+  return (
+    <details className="context-drawer small" onToggle={(e) => (e.target as HTMLDetailsElement).open && load()}>
+      <summary>Context from “{element.parent_title}”</summary>
+      {ctx === undefined ? (
+        <p className="muted">Loading…</p>
+      ) : ctx === null ? (
+        <p className="muted">The source has no text (finished or a PDF).</p>
+      ) : (
+        <div className="context-text">
+          {ctx.before && <p className="muted">{ctx.before}</p>}
+          <p>{ctx.hit}</p>
+          {ctx.after && <p className="muted">{ctx.after}</p>}
+        </div>
+      )}
+    </details>
+  );
+}
 
 export type ItemOutcome = "graded" | "again" | "rescheduled" | "done" | "dismiss" | "restored";
 
@@ -43,6 +92,16 @@ export function ItemView({ element, mode, onFinish, onOpen, onChanged, onDelete,
   const dirty = useRef(false);
   const timer = useRef<number | undefined>(undefined);
   const [hints, setHints] = useState(() => lintItem(item.question, item.answer));
+  const [needsWork, setNeedsWork] = useState(element.needs_work);
+  const leech = item.lapses >= LEECH_LAPSES;
+
+  const toggleNeedsWork = useCallback(async () => {
+    const v = !needsWork;
+    await api.setFlag(element.id, "needs_work", v);
+    setNeedsWork(v);
+    notify(v ? "Flagged: needs work (schedule unchanged)" : "Needs-work flag cleared");
+    onChanged?.();
+  }, [element.id, needsWork, notify, onChanged]);
 
   const active = element.status === "active";
   /** Grading is a repetition: only from the Learn queue, never while browsing. */
@@ -105,6 +164,7 @@ export function ItemView({ element, mode, onFinish, onOpen, onChanged, onDelete,
   useEffect(() => {
     const onKey = (ev: KeyboardEvent) => {
       if (ev.ctrlKey && ev.key.toLowerCase() === "j") return ev.preventDefault(), askReschedule();
+      if (ev.altKey && ev.key.toLowerCase() === "w") return ev.preventDefault(), void toggleNeedsWork();
       if (isTyping(ev.target) || ev.ctrlKey || ev.altKey || ev.metaKey) return;
       if (!shown && (ev.key === " " || ev.key === "Enter")) {
         ev.preventDefault();
@@ -116,7 +176,7 @@ export function ItemView({ element, mode, onFinish, onOpen, onChanged, onDelete,
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [askReschedule, canGrade, grade, shown]);
+  }, [askReschedule, canGrade, grade, shown, toggleNeedsWork]);
 
   return (
     <div className="element-view">
@@ -127,6 +187,12 @@ export function ItemView({ element, mode, onFinish, onOpen, onChanged, onDelete,
         onReviewBranch={onReviewBranch}
         onRestore={() => act(() => api.restore(element.id), "restored")}
       />
+      {(leech || needsWork) && (
+        <div className="flag-banner small">
+          {leech && <span className="chip warn">leech: forgotten {item.lapses}×. Rescheduling won't fix it; rewrite or split it</span>}
+          {needsWork && <span className="chip warn">needs work</span>}
+        </div>
+      )}
       <div className="card">
         <div className="card-label">Question</div>
         <RichField className="card-q" docJson={item.question} onChange={edited("q")} placeholder="Question…" />
@@ -134,6 +200,7 @@ export function ItemView({ element, mode, onFinish, onOpen, onChanged, onDelete,
           <>
             <div className="card-label">Answer</div>
             <RichField className="card-a" docJson={item.answer} onChange={edited("a")} placeholder="Answer…" />
+            <ContextDrawer element={element} />
           </>
         ) : (
           <button className="reveal" onClick={() => setShown(true)}>
@@ -169,6 +236,9 @@ export function ItemView({ element, mode, onFinish, onOpen, onChanged, onDelete,
             </button>
           ))}
         <button disabled={busy} onClick={askReschedule} title="Ctrl+J">Reschedule…</button>
+        <button className={needsWork ? "active" : ""} onClick={() => void toggleNeedsWork()} title="Alt+W — mark to rewrite later; the schedule is unchanged">
+          {needsWork ? "✓ Needs work" : "Needs work"}
+        </button>
         <span className="spacer" />
         {onDelete && <button disabled={busy} className="danger" onClick={onDelete}>Delete</button>}
         {active && (

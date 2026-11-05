@@ -24,7 +24,7 @@
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme]) {
     --bg: #17181b;
     --panel: #1f2125;
     --text: #e6e6e6;
@@ -43,6 +43,37 @@
     --g4: #60a5fa;
     color-scheme: dark;
   }
+}
+:root[data-theme="dark"] {
+    --bg: #17181b;
+    --panel: #1f2125;
+    --text: #e6e6e6;
+    --muted: #9aa0a6;
+    --border: #33363c;
+    --accent: #6ea8dc;
+    --accent-text: #0e1113;
+    --extract: rgba(110, 168, 220, 0.18);
+    --extract-line: #6ea8dc;
+    --cloze: #f59e0b;
+    --ignore: #6b6b6b;
+    --readpoint: #f87171;
+    --g1: #f87171;
+    --g2: #fbbf24;
+    --g3: #4ade80;
+    --g4: #60a5fa;
+    color-scheme: dark;
+  }
+:root[data-theme="sepia"] {
+  --bg: #f4ecd8;
+  --panel: #fbf5e6;
+  --text: #3b2f22;
+  --muted: #7a6a55;
+  --border: #e0d3b6;
+  --accent: #8a5a2b;
+  --accent-text: #fff8ec;
+  --extract: rgba(138, 90, 43, 0.14);
+  --extract-line: #8a5a2b;
+  color-scheme: light;
 }
 
 * { box-sizing: border-box; }
@@ -387,3 +418,79 @@ select { font: inherit; color: var(--text); background: var(--panel); border: 1p
 .fmt.dim { opacity: 0.35; }
 .fmt-sep { width: 1px; height: 16px; background: var(--border); margin: 0 4px; }
 .import .format-bar { margin: 0 -16px; padding: 3px 16px; }
+
+/* ----- Priority bands ----- */
+.badge.band-critical { box-shadow: 0 0 0 2px #dc2626; }
+.badge.band-high { box-shadow: 0 0 0 2px #f59e0b; }
+.badge.band-low { opacity: 0.75; }
+.badge.band-someday { opacity: 0.5; }
+.badge.video { background: #7c3aed; }
+.marker { font-size: 11px; margin-left: 2px; }
+.marker.warn { color: var(--g1); }
+.chip.warn { color: var(--g1); border-color: var(--g1); }
+.flag-banner { display: flex; gap: 6px; padding: 4px 24px 0; }
+.crumbs { display: inline; }
+button.active { border-color: var(--accent); }
+.tree-tools select { max-width: 92px; font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 3px; }
+
+/* ----- Hover preview of extracts and clozes ----- */
+.peek {
+  position: absolute; z-index: 6; max-width: 300px; padding: 4px 8px; border-radius: 6px;
+  background: var(--panel); border: 1px solid var(--border); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.15);
+  font-family: var(--ui-font); pointer-events: none;
+}
+
+/* ----- Learn: up next, time box, overload, dashboard ----- */
+.learn-body { flex: 1; min-height: 0; display: flex; }
+.learn-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.up-next { width: 280px; border-left: 1px solid var(--border); padding: 8px; overflow: auto; background: var(--panel); }
+.up-next .row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.up-row { display: flex; align-items: center; gap: 4px; padding: 3px 2px; border-radius: 4px; cursor: grab; }
+.up-row:hover { background: var(--bg); }
+.up-row.dragging { opacity: 0.4; }
+.up-row .tree-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.up-row .small-btn { padding: 0 5px; }
+.timebox.over { color: var(--g1); }
+.status-banner.overload { margin: 6px 24px 0; }
+.summary { justify-content: center; margin: 16px auto; }
+.dashboard { max-width: 520px; margin: 28px auto 0; text-align: left; }
+.week { display: flex; gap: 8px; align-items: flex-end; height: 90px; }
+.week-day { flex: 1; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; }
+.week-bar { width: 100%; background: var(--accent); border-radius: 3px 3px 0 0; min-height: 1px; }
+.warn-text { color: var(--g1); }
+
+/* ----- Items: context drawer ----- */
+.context-drawer { margin-top: 10px; }
+.context-drawer summary { cursor: pointer; color: var(--muted); }
+.context-text { font-family: var(--reader-font); font-size: calc(var(--reader-size) * 0.9); border-left: 3px solid var(--border); padding-left: 10px; }
+
+/* ----- Focus mode ----- */
+.app.focus .topnav, .app.focus .toolbar, .app.focus .format-bar, .app.focus .why { display: none; }
+.app.focus .reader .tiptap > :has(~ :has(.ir-readpoint)) { opacity: 0.45; transition: opacity 0.2s; }
+.app.focus .reader .tiptap > :has(~ :has(.ir-readpoint)):hover { opacity: 1; }
+.focus-exit { position: fixed; top: 6px; right: 10px; z-index: 20; opacity: 0.5; }
+.focus-exit:hover { opacity: 1; }
+
+/* ----- Incremental video ----- */
+.video-panel { padding: 6px 24px 0; }
+.video-frame { position: relative; width: 100%; max-width: calc(43vh * 16 / 9); margin: 0 auto; aspect-ratio: 16 / 9; background: #000; border-radius: 6px; overflow: hidden; }
+.video-host, .video-host iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+.video-error { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #eee; gap: 4px; text-align: center; padding: 12px; }
+.video-controls { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 0; }
+.video-controls .small-btn { padding: 1px 8px; }
+.reader a[href^="#t="] { font-family: ui-monospace, monospace; font-size: 0.8em; margin-right: 2px; }
+
+/* ----- Image occlusion ----- */
+.ir-occl { position: relative; display: inline-block; max-width: 100%; line-height: 0; }
+.ir-occl img { display: block; max-width: 100%; height: auto; }
+.ir-occl .mask, .occl-editor .mask {
+  position: absolute; background: #9ca3af; border: 1px solid #4b5563; border-radius: 2px;
+  display: flex; align-items: center; justify-content: center; font: 600 14px/1 var(--ui-font); color: #fff;
+}
+.ir-occl .mask.active { background: #f59e0b; }
+.ir-occl .mask.revealed { background: transparent; border: 2px solid #f59e0b; }
+.occlusion-modal { width: min(1000px, 96vw); }
+.occl-editor { position: relative; display: inline-block; user-select: none; cursor: crosshair; touch-action: none; max-width: 100%; }
+.occl-editor img { display: block; max-width: 100%; max-height: 65vh; }
+.occl-editor .mask { background: rgba(245, 158, 11, 0.75); cursor: pointer; }
+.occl-editor .mask.draft { background: rgba(245, 158, 11, 0.35); border-style: dashed; }

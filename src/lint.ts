@@ -21,6 +21,7 @@ const words = (t: string) => t.split(/\s+/).filter(Boolean).length;
  * they just point at items that tend to be hard to remember.
  */
 export function lintItem(questionJson: string, answerJson: string): string[] {
+  if (questionJson.includes('"type":"occlusion"')) return [];
   const q = docText(questionJson);
   const a = docText(answerJson);
   const out: string[] = [];

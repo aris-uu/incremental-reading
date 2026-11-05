@@ -12,6 +12,9 @@ import { StatsView } from "./views/StatsView";
 import { openImportWindow, COLLECTION_CHANGED } from "./importWindow";
 import { CommandPalette, type Command } from "./views/CommandPalette";
 import { TodayContext, type Notify } from "./notify";
+import { fetchVideoInfo, youtubeId } from "./youtube";
+import { exportToAnki } from "./ankiExport";
+import { OcclusionDialog } from "./views/OcclusionDialog";
 
 const isTyping = (t: EventTarget | null) =>
   t instanceof HTMLElement && (t.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName));
@@ -29,6 +32,7 @@ interface ExternalImport {
 }
 
 const SIDEBAR_KEY = "ir.sidebarOpen";
+const FOCUS_KEY = "ir.focus";
 
 export default function App() {
   const [view, setView] = useState<View>({ kind: "learn" });
@@ -39,6 +43,17 @@ export default function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [version, setVersion] = useState(0);
   const [toolsOpen, setToolsOpen] = useState(false);
+  /** Focus mode: no sidebar or toolbars, text centred, read text dimmed. */
+  const [focus, setFocus] = useState(() => {
+    try {
+      return localStorage.getItem(FOCUS_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  /** Standalone image occlusion from a picked image file. */
+  const [occlusionSrc, setOcclusionSrc] = useState<string | null>(null);
+  const imagePick = useRef<HTMLInputElement>(null);
   const [sidebarOpen, setSidebarOpen] = useState(() => {
     try {
       return localStorage.getItem(SIDEBAR_KEY) !== "0";
@@ -85,6 +100,23 @@ export default function App() {
     const unChanged = listen(COLLECTION_CHANGED, changed);
     const unExternal = listen<ExternalImport>("external-import", async ({ payload }) => {
       try {
+        // A YouTube page from the browser extension becomes an incremental video.
+        const vid = payload.url ? youtubeId(payload.url) : null;
+        if (vid) {
+          const info = await fetchVideoInfo(vid);
+          await api.importTopic({
+            title: info.title,
+            doc_json: JSON.stringify(info.transcript ?? EMPTY_DOC),
+            priority: payload.priority ?? 50,
+            url: payload.url,
+            site: "YouTube",
+            author: info.author,
+            inbox: true,
+            video_id: vid,
+          });
+          notify(`Inbox: video “${info.title}”`);
+          return changed();
+        }
         await api.importTopic({
           title: payload.title,
           doc_json: JSON.stringify(htmlToDoc(payload.html)),
@@ -116,6 +148,40 @@ export default function App() {
       return !o;
     });
   }, []);
+
+  const toggleFocus = useCallback(() => {
+    setFocus((f) => {
+      try {
+        localStorage.setItem(FOCUS_KEY, f ? "0" : "1");
+      } catch {
+        /* not remembered */
+      }
+      return !f;
+    });
+  }, []);
+
+  const exportAll = useCallback(async () => {
+    try {
+      notify("Exporting to Anki…");
+      const { path, count } = await exportToAnki(null);
+      notify(`Exported ${count} items: ${path}`);
+    } catch (e) {
+      notify(`Anki export: ${e}`);
+    }
+  }, [notify]);
+
+  const pickedImage = useCallback(
+    async (file: File | undefined) => {
+      if (!file) return;
+      try {
+        const ext = file.name.split(".").pop() ?? "png";
+        setOcclusionSrc(await api.saveAsset(await file.arrayBuffer(), ext));
+      } catch (e) {
+        notify(String(e));
+      }
+    },
+    [notify],
+  );
 
   const learn = useCallback(() => {
     setView({ kind: "learn" });
@@ -175,12 +241,14 @@ export default function App() {
       else if (ev.ctrlKey && ev.shiftKey && k === "n") ev.preventDefault(), void newItem();
       else if (ev.ctrlKey && ev.key === "\\") ev.preventDefault(), toggleSidebar();
       else if (ev.ctrlKey && !ev.shiftKey && k === "k") ev.preventDefault(), setPaletteOpen(true);
+      else if (ev.ctrlKey && ev.shiftKey && k === "f") ev.preventDefault(), toggleFocus();
+      else if (ev.key === "Escape" && focus && !document.querySelector(".modal-backdrop")) toggleFocus();
       // Ctrl+Z outside a text field undoes the last tree/schedule action; inside, the editor's own undo applies.
       else if (ev.ctrlKey && !ev.shiftKey && k === "z" && !isTyping(ev.target)) ev.preventDefault(), void doUndo();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [doImport, doUndo, learn, newItem, toggleSidebar]);
+  }, [doImport, doUndo, focus, learn, newItem, toggleFocus, toggleSidebar]);
 
   const commands: Command[] = [
     { label: "Learn: today's queue", hint: "Ctrl+L", run: learn },
@@ -191,6 +259,15 @@ export default function App() {
     { label: "Statistics", run: () => setView({ kind: "stats" }) },
     { label: "Tools: postpone, mercy, settings, backup", run: () => setToolsOpen(true) },
     { label: "Toggle sidebar", hint: "Ctrl+\\", run: toggleSidebar },
+    { label: focus ? "Leave focus mode" : "Focus mode", hint: "Ctrl+Shift+F", run: toggleFocus },
+    { label: "Time box: fit today's session into N minutes", run: () => {
+      learn();
+      const v = window.prompt("How many minutes do you have?", "20");
+      const m = v == null ? NaN : Number(v);
+      if (m > 0) notify(`Time box: ${sessionRef.current.timebox(m)} elements in ${m} min`);
+    } },
+    { label: "New image occlusion from a file…", run: () => imagePick.current?.click() },
+    { label: "Export all items to Anki (.apkg)", run: () => void exportAll() },
     { label: "Undo last action", hint: "Ctrl+Z", run: () => void doUndo() },
     { label: "Reload today's queue", run: () => void session.load().then((m) => m && notify(m)) },
     { label: "Back up the collection", run: () => void api.backup().then((p) => notify(`Backup written: ${p}`)) },
@@ -207,7 +284,7 @@ export default function App() {
 
   return (
     <TodayContext.Provider value={stats?.today ?? null}>
-    <div className="app">
+    <div className={`app ${focus ? "focus" : ""}`}>
       <nav className="topnav">
         <button className="icon" onClick={toggleSidebar} title="Toggle sidebar (Ctrl+\)">☰</button>
         <strong className="brand">IR</strong>
@@ -231,12 +308,20 @@ export default function App() {
         )}
       </nav>
       <div className="workspace">
-        {sidebarOpen && stats && (
+        {sidebarOpen && !focus && stats && (
           <Sidebar today={stats.today} version={version} openId={currentId} onOpen={open} onReview={review} onChanged={changed} notify={notify} />
         )}
         <main>
           {view.kind === "learn" && (
-            <LearnView key={undoVersion} session={session} notify={notify} onOpen={open} onChanged={changed} onReviewBranch={reviewBranch} />
+            <LearnView
+              key={undoVersion}
+              session={session}
+              notify={notify}
+              onOpen={open}
+              onChanged={changed}
+              onReviewBranch={reviewBranch}
+              onOverload={() => setToolsOpen(true)}
+            />
           )}
           {view.kind === "stats" && <StatsView version={version} />}
           {view.kind === "inbox" && <InboxView version={version} notify={notify} onChanged={changed} onOpen={open} />}
@@ -256,6 +341,26 @@ export default function App() {
           )}
         </main>
       </div>
+      {focus && (
+        <button className="focus-exit small-btn" onClick={toggleFocus} title="Leave focus mode (Esc or Ctrl+Shift+F)">
+          ✕ focus
+        </button>
+      )}
+      <input ref={imagePick} type="file" accept="image/*" hidden onChange={(e) => (void pickedImage(e.target.files?.[0]), (e.target.value = ""))} />
+      {occlusionSrc && (
+        <OcclusionDialog
+          src={occlusionSrc}
+          parentId={null}
+          title="Image"
+          notify={notify}
+          onClose={() => setOcclusionSrc(null)}
+          onCreated={(ids) => {
+            setOcclusionSrc(null);
+            changed();
+            if (ids[0]) open(ids[0]);
+          }}
+        />
+      )}
       {toolsOpen && <ToolsDialog branch={branch} onClose={() => setToolsOpen(false)} onChanged={changed} notify={notify} />}
       {paletteOpen && <CommandPalette commands={commands} onOpenElement={open} onClose={() => setPaletteOpen(false)} />}
       {toast && (

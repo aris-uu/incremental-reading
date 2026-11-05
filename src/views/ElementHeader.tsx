@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, fmtDays, type ElementFull } from "../api";
+import { api, bandOf, fmtDays, type ElementFull } from "../api";
 import { useToday } from "../notify";
 
 /** "Why is this here?": timing, queue position, and what last moved it. */
@@ -11,6 +11,7 @@ function whyChips(el: ElementFull, today: number | null, rank: number, size: num
     out.push(d > 0 ? `${d} day${d === 1 ? "" : "s"} overdue` : d === 0 ? "due today" : `early: due in ${fmtDays(-d)}`);
   }
   if (el.status === "active" && size > 0) out.push(`#${rank} of ${size} by priority`);
+  if (el.status === "active") out.push(`${bandOf(el.priority).label.toLowerCase()} priority`);
   if (el.item && el.item.reps === 0) out.push("new item");
   else if (el.topic && el.topic.last_day == null && el.status === "active") out.push("first read");
   if (el.last_event === "postpone") out.push("was postponed");
@@ -39,6 +40,13 @@ export function ElementHeader({ element, onOpen, onChanged, onRestore, onReviewB
   const [title, setTitle] = useState(element.title);
   const [priority, setPriority] = useState(element.priority);
   const [rank, setRank] = useState({ rank: element.queue_rank, size: element.queue_size });
+  const [pinned, setPinned] = useState(element.pinned);
+  useEffect(() => setPinned(element.pinned), [element.id, element.pinned]);
+  const togglePin = async () => {
+    await api.setFlag(element.id, "pinned", !pinned);
+    setPinned(!pinned);
+    onChanged?.();
+  };
   const today = useToday();
   useEffect(() => {
     setTitle(element.title);
@@ -76,7 +84,9 @@ export function ElementHeader({ element, onOpen, onChanged, onRestore, onReviewB
         </div>
       )}
       <div className="row">
-        <span className={`badge ${element.kind}`}>{element.kind === "topic" ? "T" : "Q"}</span>
+        <span className={`badge ${element.kind} band-${bandOf(priority).name}`} title={`${bandOf(priority).label} priority`}>
+          {element.kind === "topic" ? (element.topic?.video_id ? "V" : "T") : "Q"}
+        </span>
         <input
           className="title-input"
           value={title}
@@ -106,6 +116,11 @@ export function ElementHeader({ element, onOpen, onChanged, onRestore, onReviewB
             </span>
           )}
         </label>
+        {element.parent_id == null && (
+          <button className={`small-btn ${pinned ? "active" : ""}`} onClick={() => void togglePin()} title="Pinned roots stay at the top of the tree">
+            {pinned ? "📌 Pinned" : "Pin"}
+          </button>
+        )}
         {onReviewBranch && element.children > 0 && (
           <button className="small-btn" onClick={() => onReviewBranch(element.id)} title="Review this element and everything derived from it">
             Review branch
@@ -120,7 +135,18 @@ export function ElementHeader({ element, onOpen, onChanged, onRestore, onReviewB
         </div>
       )}
       <div className="row muted small">
-        {element.parent_id != null && <a onClick={() => onOpen?.(element.parent_id!)}>↑ {element.parent_title}</a>}
+        {element.ancestors.length > 0 && (
+          <nav className="crumbs" aria-label="Breadcrumb">
+            {element.ancestors.map((a, i) => (
+              <span key={a.id}>
+                {i > 0 && <span className="muted"> › </span>}
+                <a onClick={() => onOpen?.(a.id)} title={a.title}>
+                  {a.title.length > 40 ? `${a.title.slice(0, 38)}…` : a.title}
+                </a>
+              </span>
+            ))}
+          </nav>
+        )}
         {ref && ref.source_id !== element.id && <span>· from {ref.title}</span>}
         {ref?.url && (
           <a href={ref.url} target="_blank" rel="noreferrer">

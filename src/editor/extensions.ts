@@ -1,5 +1,9 @@
 import { Extension, InputRule, Mark, generateJSON, mergeAttributes } from "@tiptap/react";
 import { MathBlock, MathInline } from "./math";
+import { Occlusion } from "./occlusion";
+import { toDisplaySrc, toStoredSrc } from "./assetSrc";
+
+export { toDisplaySrc } from "./assetSrc";
 import { looksLikeMarkdown, markdownToHtml } from "./markdown";
 import StarterKit from "@tiptap/starter-kit";
 import Image from "@tiptap/extension-image";
@@ -7,16 +11,6 @@ import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 
 // ---------- Local images ----------
-
-/** Stored form of an image copied into the collection's assets folder. */
-const ASSET_PREFIX = "ir-asset:";
-// Windows and Android webviews expose custom schemes as http://<scheme>.localhost/.
-const ASSET_BASE = /Windows|Android/i.test(navigator.userAgent) ? "http://irasset.localhost/" : "irasset://localhost/";
-
-export const toDisplaySrc = (src: string | null) =>
-  src && src.startsWith(ASSET_PREFIX) ? ASSET_BASE + src.slice(ASSET_PREFIX.length) : src;
-const toStoredSrc = (src: string | null) =>
-  src && src.startsWith(ASSET_BASE) ? ASSET_PREFIX + src.slice(ASSET_BASE.length) : src;
 
 /** Image node that stores local assets as `ir-asset:<file>` but displays them from the app. */
 const LocalImage = Image.extend({
@@ -171,7 +165,7 @@ const LiveMarkdown = Extension.create({
   },
 });
 
-const base = [StarterKit.configure({ link: { openOnClick: false, autolink: true } }), LocalImage, MathInline, MathBlock, LiveMarkdown];
+const base = [StarterKit.configure({ link: { openOnClick: false, autolink: true } }), LocalImage, MathInline, MathBlock, Occlusion, LiveMarkdown];
 
 /** Topics: rich text plus extract/cloze/ignore marks and the read point. */
 export const extensions = [...base, ExtractMark, ClozeMark, IgnoreMark, ReadPoint];

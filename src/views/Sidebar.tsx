@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Notify } from "../notify";
-import { api, fmtDays, type BulkAction, type TreeNode } from "../api";
+import { api, bandOf, fmtDays, LEECH_LAPSES, type BulkAction, type TreeNode } from "../api";
+import { exportToAnki } from "../ankiExport";
 import { EMPTY_DOC } from "../editor/extensions";
 import { ContextMenu, type MenuEntry } from "./ContextMenu";
 import { MoveDialog } from "./MoveDialog";
@@ -18,6 +19,20 @@ interface Props {
 
 const DRAG_TYPE = "application/x-ir-elements";
 const SORT_KEY = "ir.treeSort";
+const FILTER_KEY = "ir.treeFilter";
+
+const FILTERS = {
+  all: "Everything",
+  due: "Due today",
+  overdue: "Overdue",
+  items: "Items only",
+  leeches: "Leeches",
+  needs_work: "Needs work",
+  pdf: "PDFs",
+  video: "Videos",
+  recent: "Edited this week",
+} as const;
+type Filter = keyof typeof FILTERS;
 /** Where a drag would land: before/after a row (reorder) or into it (reparent). */
 type DropTarget = { id: number; zone: "before" | "into" | "after" };
 const isTyping = (t: EventTarget | null) => t instanceof HTMLElement && (t.isContentEditable || ["INPUT", "TEXTAREA"].includes(t.tagName));
@@ -47,6 +62,46 @@ export function Sidebar({ today, version, openId, onOpen, onReview, onChanged, n
     }
   });
   const bodyRef = useRef<HTMLDivElement>(null);
+  const [filter, setFilterState] = useState<Filter>(() => {
+    try {
+      const f = localStorage.getItem(FILTER_KEY) as Filter | null;
+      return f && f in FILTERS ? f : "all";
+    } catch {
+      return "all";
+    }
+  });
+  const setFilter = (f: Filter) => {
+    setFilterState(f);
+    try {
+      localStorage.setItem(FILTER_KEY, f);
+    } catch {
+      /* not remembered */
+    }
+  };
+  const weekAgo = Date.now() / 1000 - 7 * 86400;
+  const passes = (n: TreeNode): boolean => {
+    const due = n.status === "active" && n.due_day != null && !(n.kind === "topic" && n.empty && !n.pdf);
+    switch (filter) {
+      case "due":
+        return due && n.due_day! <= today;
+      case "overdue":
+        return due && n.due_day! < today;
+      case "items":
+        return n.kind === "item";
+      case "leeches":
+        return n.kind === "item" && n.lapses >= LEECH_LAPSES;
+      case "needs_work":
+        return n.needs_work;
+      case "pdf":
+        return n.pdf;
+      case "video":
+        return n.video;
+      case "recent":
+        return n.updated_at >= weekAgo;
+      default:
+        return true;
+    }
+  };
 
   const changeSort = (m: "manual" | "priority") => {
     setSortMode(m);
@@ -81,6 +136,8 @@ export function Sidebar({ today, version, openId, onOpen, onReview, onChanged, n
     }
     // The server returns manual order; the priority view only re-sorts for display.
     if (sortMode === "priority") for (const list of children.values()) list.sort((a, b) => a.priority - b.priority || a.position - b.position);
+    // Pinned roots stay at the top.
+    children.get(null)?.sort((a, b) => Number(b.pinned) - Number(a.pinned));
     return { byId, children, parentOf };
   }, [nodes, sortMode]);
 
@@ -109,16 +166,17 @@ export function Sidebar({ today, version, openId, onOpen, onReview, onChanged, n
   const visible = useMemo(() => {
     const memo = new Map<number, boolean>();
     const visit = (n: TreeNode): boolean => {
-      const self = (showInactive || n.status === "active") && (!matches || matches.has(n.id));
+      const self = (showInactive || n.status === "active") && (!matches || matches.has(n.id)) && passes(n);
       const kids = (children.get(n.id) ?? []).map(visit).some(Boolean);
       memo.set(n.id, self || kids);
       return self || kids;
     };
     (children.get(null) ?? []).forEach(visit);
     return memo;
-  }, [children, matches, showInactive]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [children, matches, showInactive, filter, today]);
 
-  const isOpen = useCallback((id: number) => !!matches || !collapsed.has(id), [collapsed, matches]);
+  const isOpen = useCallback((id: number) => !!matches || filter !== "all" || !collapsed.has(id), [collapsed, filter, matches]);
 
   /** Rows in display order, for Shift ranges and arrow keys. */
   const flat = useMemo(() => {
@@ -267,6 +325,19 @@ export function Sidebar({ today, version, openId, onOpen, onReview, onChanged, n
     });
   };
 
+  const exportAnki = async (ids: number[] | null) => {
+    try {
+      notify("Exporting to Anki…");
+      const { path, count } = await exportToAnki(ids);
+      notify(`Exported ${count} items: ${path}`);
+    } catch (e) {
+      notify(`Anki export: ${e}`);
+    }
+  };
+
+  const setFlag = (ids: number[], flag: "pinned" | "needs_work", value: boolean) =>
+    run("", () => Promise.all(ids.map((id) => api.setFlag(id, flag, value))));
+
   const menuEntries = (target: number | null): MenuEntry[] => {
     if (target == null || selected.size === 0) {
       return [
@@ -276,6 +347,7 @@ export function Sidebar({ today, version, openId, onOpen, onReview, onChanged, n
         { label: "Expand all", onClick: () => setBranchCollapsed(null, false) },
         { label: "Collapse all", onClick: () => setBranchCollapsed(null, true) },
         { label: "Sort top level by priority", onClick: () => run("Sorted by priority", () => api.sortChildren(null)) },
+        { label: "Export all items to Anki (.apkg)", onClick: () => void exportAnki(null) },
         "separator",
         { label: sortMode === "manual" ? "✓ Manual order" : "Manual order", onClick: () => changeSort("manual") },
         { label: sortMode === "priority" ? "✓ Priority order" : "Priority order", onClick: () => changeSort("priority") },
@@ -313,6 +385,18 @@ export function Sidebar({ today, version, openId, onOpen, onReview, onChanged, n
       ...(one && parent != null ? [{ label: "Move up a level", onClick: () => moveTo(ids, grandparent) } as MenuEntry] : []),
       { label: "Move to top level", onClick: () => moveTo(ids, null), disabled: ids.every((id) => parentOf.get(id) == null) },
       "separator",
+      ...(one && parent == null
+        ? [{ label: one.pinned ? "Unpin from top" : "Pin to top", onClick: () => setFlag([one.id], "pinned", !one.pinned) } as MenuEntry]
+        : []),
+      ...(ids.some((id) => byId.get(id)?.kind === "item")
+        ? [
+            {
+              label: ids.every((id) => byId.get(id)?.needs_work) ? `Clear “needs work”${n}` : `Flag “needs work”${n}`,
+              onClick: () => setFlag(ids, "needs_work", !ids.every((id) => byId.get(id)?.needs_work)),
+            } as MenuEntry,
+          ]
+        : []),
+      { label: `Export branch to Anki${n}`, onClick: () => void exportAnki(roots(ids)) },
       { label: `Set priority…${n}`, onClick: () => askPriority(ids), hint: "P" },
       { label: `Review today${n}`, onClick: () => bulk(ids, "read_today"), disabled: !anyActive },
       ...(anyActive ? ([{ label: `Dismiss${n}`, onClick: () => bulk(ids, "dismiss") }, { label: `Done!${n}`, onClick: () => bulk(ids, "done") }] as MenuEntry[]) : []),
@@ -481,7 +565,8 @@ export function Sidebar({ today, version, openId, onOpen, onReview, onChanged, n
       matches && !hit ? "context" : "",
       dropTarget !== "root" && dropTarget?.id === n.id ? `drop-${dropTarget.zone}` : "",
     ].join(" ");
-    const badge = n.kind === "item" ? "Q" : n.pdf ? "P" : n.empty ? "N" : "T";
+    const badge = n.kind === "item" ? "Q" : n.pdf ? "P" : n.video ? "V" : n.empty ? "N" : "T";
+    const band = n.status === "active" ? `band-${bandOf(n.priority).name}` : "";
     const due =
       n.status !== "active" ? n.status : n.due_day == null || (n.kind === "topic" && n.empty && !n.pdf) ? "" : fmtDays(n.due_day - today);
     return (
@@ -516,8 +601,16 @@ export function Sidebar({ today, version, openId, onOpen, onReview, onChanged, n
         >
           {kids.length ? (open ? "▾" : "▸") : ""}
         </span>
-        <span className={`badge ${n.kind} ${badge === "N" ? "note" : ""} ${badge === "P" ? "pdf" : ""}`}>{badge}</span>
+        <span
+          className={`badge ${n.kind} ${badge === "N" ? "note" : ""} ${badge === "P" ? "pdf" : ""} ${badge === "V" ? "video" : ""} ${band}`}
+          title={n.status === "active" ? `${bandOf(n.priority).label} priority (${Math.round(n.priority)}%)` : n.status}
+        >
+          {badge}
+        </span>
+        {n.pinned && depth === 0 && <span className="marker" title="Pinned">📌</span>}
         <span className="tree-title" title={n.title}>{n.title}</span>
+        {n.kind === "item" && n.lapses >= LEECH_LAPSES && <span className="marker warn" title={`Leech: forgotten ${n.lapses}×`}>⚠</span>}
+        {n.needs_work && <span className="marker" title="Needs work">✎</span>}
         <span className="muted small mono">{due}</span>
       </div>
     );
@@ -529,6 +622,13 @@ export function Sidebar({ today, version, openId, onOpen, onReview, onChanged, n
     <aside className="sidebar">
       <div className="tree-tools">
         <input placeholder="Search text…" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === "Escape" && setQuery("")} />
+        <select className="small" value={filter} onChange={(e) => setFilter(e.target.value as Filter)} title="Filter the tree">
+          {(Object.keys(FILTERS) as Filter[]).map((f) => (
+            <option key={f} value={f}>
+              {FILTERS[f]}
+            </option>
+          ))}
+        </select>
         <label className="small" title="Show done and dismissed elements">
           <input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} /> all
         </label>
@@ -541,6 +641,13 @@ export function Sidebar({ today, version, openId, onOpen, onReview, onChanged, n
         </button>
         <button className="small-btn" title="New top-level topic" onClick={() => newTopic(null)}>+</button>
       </div>
+      {filter !== "all" && (
+        <div className="search-bar small">
+          <span className="muted">Filter: {FILTERS[filter]}</span>
+          <span className="spacer" />
+          <button className="small-btn" onClick={() => setFilter("all")}>Clear</button>
+        </div>
+      )}
       {(matches || selected.size > 1) && (
         <div className="search-bar small">
           {matches ? <span className="muted">{matches.size} matches</span> : <span className="muted">{selected.size} selected</span>}

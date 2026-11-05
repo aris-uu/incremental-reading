@@ -8,6 +8,7 @@ import { EMPTY_DOC, extensions, htmlToDoc } from "../editor/extensions";
 import { COLLECTION_CHANGED } from "../importWindow";
 import { FormatBar } from "../editor/FormatBar";
 import { SUPPORTED, importFiles } from "../importers";
+import { fetchVideoInfo, youtubeId, youtubeStart } from "../youtube";
 
 /** Extract the readable article from a fetched page. */
 function readable(html: string, url: string) {
@@ -36,6 +37,8 @@ export function ImportView() {
   const filesRef = useRef<HTMLInputElement>(null);
   const folderRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
+  /** Set when the URL is a YouTube video: the topic becomes an incremental video. */
+  const [video, setVideo] = useState<{ id: string; start: number } | null>(null);
 
   /** PDFs, EPUBs, HTML, Markdown and text files; folders keep their structure. */
   const importFileList = useCallback(
@@ -62,6 +65,28 @@ export function ImportView() {
     if (!editor || !u) return setStatus("Enter a URL first.");
     setBusy(true);
     setStatus("Fetching…");
+    const vid = youtubeId(u);
+    if (vid) {
+      try {
+        const info = await fetchVideoInfo(vid);
+        editor.commands.setContent(info.transcript ?? EMPTY_DOC);
+        setTitle(info.title);
+        setAuthor(info.author);
+        setSite("YouTube");
+        setVideo({ id: vid, start: youtubeStart(u) });
+        setStatus(
+          info.transcript
+            ? `Video with a ${info.language ?? ""} transcript. Extract and cloze from the text; timestamps jump the player.`
+            : "Video without a transcript (or YouTube didn't share it). You can paste one below, or add the video alone.",
+        );
+      } catch (e) {
+        setStatus(`Fetch failed: ${e}`);
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+    setVideo(null);
     try {
       const page = await api.fetchPage(u);
       const article = readable(page.html, page.final_url);
@@ -81,11 +106,11 @@ export function ImportView() {
 
   const submit = useCallback(
     async (close: boolean) => {
-      if (!editor || editor.isEmpty) return setStatus("Paste or fetch some content first.");
+      if (!editor || (editor.isEmpty && !video)) return setStatus("Paste or fetch some content first.");
       setBusy(true);
       setStatus("Saving (downloading images)…");
       try {
-        await api.importTopic({
+        const newId = await api.importTopic({
           title: title.trim(),
           doc_json: JSON.stringify(editor.getJSON()),
           priority,
@@ -93,7 +118,9 @@ export function ImportView() {
           site,
           author,
           inbox: toInbox,
+          video_id: video?.id ?? null,
         });
+        if (video?.start) await api.setVideoPos(newId, video.start);
       } catch (e) {
         setBusy(false);
         return setStatus(`Import failed: ${e}`);
@@ -107,10 +134,11 @@ export function ImportView() {
       setUrl("");
       setSite(null);
       setAuthor(null);
+      setVideo(null);
       setStatus(toInbox ? `Added “${shown}” to the Inbox.` : `Added “${shown}”. It is due today.`);
       editor.commands.focus();
     },
-    [author, editor, priority, site, title, toInbox, url],
+    [author, editor, priority, site, title, toInbox, url, video],
   );
 
   useEffect(() => {
@@ -140,9 +168,9 @@ export function ImportView() {
     >
       <div className="form-row">
         <input
-          placeholder="https://… (fetch an article) or leave empty and paste below"
+          placeholder="https://… (an article or a YouTube video) or leave empty and paste below"
           value={url}
-          onChange={(e) => setUrl(e.target.value)}
+          onChange={(e) => (setUrl(e.target.value), setVideo(null))}
           onKeyDown={(e) => e.key === "Enter" && !e.ctrlKey && void fetchUrl()}
         />
         <button disabled={busy} onClick={fetchUrl}>Fetch</button>
@@ -171,6 +199,7 @@ export function ImportView() {
           <input type="checkbox" checked={toInbox} onChange={(e) => setToInbox(e.target.checked)} /> to Inbox
         </label>
         <span className="spacer" />
+        {video && <span className="chip">▶ incremental video</span>}
         {(site || author) && <span className="muted small">{[site, author].filter(Boolean).join(" · ")}</span>}
       </div>
       <FormatBar editor={editor} />

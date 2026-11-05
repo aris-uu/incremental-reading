@@ -2,11 +2,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Notify } from "../notify";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import type { EditorState } from "@tiptap/pm/state";
-import { api, fmtDays, type ElementFull } from "../api";
+import { NodeSelection } from "@tiptap/pm/state";
+import { api, fmtDays, fmtTime, type ElementFull } from "../api";
 import { EMPTY_DOC, extensions, parseDoc, readPointKey, stripIrMarks, textDoc } from "../editor/extensions";
 import { ElementHeader } from "./ElementHeader";
+import { useToday } from "../notify";
 import { FormatBar } from "../editor/FormatBar";
 import { PdfView } from "./PdfView";
+import { VideoPanel, type VideoHandle } from "./VideoPanel";
+import { OcclusionDialog } from "./OcclusionDialog";
+import { timeFromHref } from "../youtube";
 
 export type TopicOutcome = "next" | "later" | "done" | "dismiss" | "rescheduled" | "restored";
 
@@ -75,12 +80,23 @@ function TextTopicView({ element, mode, onFinish, onOpen, onChanged, onDelete, o
   const dirty = useRef(false);
   const saveTimer = useRef<number | undefined>(undefined);
   const [busy, setBusy] = useState(false);
+  const today = useToday();
   const readerRef = useRef<HTMLDivElement>(null);
   /** Floating toolbar position (relative to the reader), shown while text is selected. */
   const [selBox, setSelBox] = useState<{ top: number; left: number } | null>(null);
   const [progress, setProgress] = useState<{ pct: number; minutes: number } | null>(null);
   /** Set once the reader places a read point; otherwise one is placed automatically on leaving. */
   const explicitRp = useRef(false);
+  const video = useRef<VideoHandle>(null);
+  const isVideo = !!topic.video_id;
+  /** Image being occluded (stored src). */
+  const [occluding, setOccluding] = useState<string | null>(null);
+  /** Consecutive clozes: one quiet counter instead of a toast each. */
+  const clozeRun = useRef({ n: 0, at: 0 });
+  /** Hover preview of an extracted or clozed span. */
+  const [peek, setPeek] = useState<{ top: number; left: number; text: string } | null>(null);
+  const peekCache = useRef(new Map<number, string>());
+  const peekTarget = useRef<number | null>(null);
 
   const editor = useEditor({
     extensions,
@@ -88,6 +104,14 @@ function TextTopicView({ element, mode, onFinish, onOpen, onChanged, onDelete, o
     editorProps: {
       // Ctrl+click an extracted or clozed span to open its child element.
       handleClick(_view, _pos, event) {
+        // Transcript timestamps seek the video.
+        const link = (event.target as HTMLElement).closest("a[href^='#t=']") as HTMLAnchorElement | null;
+        const at = timeFromHref(link?.getAttribute("href"));
+        if (at != null) {
+          event.preventDefault();
+          video.current?.seek(at);
+          return true;
+        }
         const span = (event.target as HTMLElement).closest("[data-extract],[data-cloze]") as HTMLElement | null;
         if (!span || !(event.ctrlKey || event.metaKey) || !onOpen) return false;
         const cid = Number(span.dataset.extract ?? span.dataset.cloze);
@@ -206,7 +230,11 @@ function TextTopicView({ element, mode, onFinish, onOpen, onChanged, onDelete, o
     const { question, answer } = clozeDocs(state, from, to);
     const itemId = await api.createItem(id, "cloze", JSON.stringify(question), JSON.stringify(answer));
     editor.chain().setTextSelection({ from, to }).setMark("cloze", { id: itemId }).setTextSelection(to).run();
-    notify("Cloze created");
+    // Keep the cursor in the text so the next keyword + Alt+Z follows straight on.
+    const run = clozeRun.current;
+    run.n = Date.now() - run.at < 30_000 ? run.n + 1 : 1;
+    run.at = Date.now();
+    notify(run.n > 1 ? `Cloze created (${run.n} in a row)` : "Cloze created");
     onChanged?.();
   }, [editor, id, notify, onChanged]);
 
@@ -251,6 +279,74 @@ function TextTopicView({ element, mode, onFinish, onOpen, onChanged, onDelete, o
     await finish("done");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editor, id, notify, onChanged, save]);
+
+  /** The selected image, or the first image in the selection. */
+  const selectedImage = useCallback((): string | null => {
+    if (!editor) return null;
+    const sel = editor.state.selection;
+    if (sel instanceof NodeSelection && sel.node.type.name === "image") return sel.node.attrs.src;
+    let found: string | null = null;
+    editor.state.doc.nodesBetween(sel.from, Math.max(sel.to, sel.from + 1), (n) => {
+      if (!found && n.type.name === "image") found = n.attrs.src;
+      return !found;
+    });
+    return found;
+  }, [editor]);
+
+  const occlude = useCallback(() => {
+    const src = selectedImage();
+    if (!src) return notify("Click an image first, then Occlude");
+    setOccluding(src);
+  }, [notify, selectedImage]);
+
+  /** Clip extract: the transcript paragraphs that fall in the range come along as text. */
+  const makeClip = useCallback(
+    async (start: number, end: number) => {
+      const paras: any[] = editor?.getJSON().content ?? [];
+      const stamp = (p: any) => timeFromHref(p.content?.find((c: any) => c.marks?.some((m: any) => m.type === "link"))?.marks?.find((m: any) => m.type === "link")?.attrs?.href);
+      const picked = paras.filter((p) => {
+        const t = stamp(p);
+        return t != null && t >= start - 30 && t < end;
+      });
+      const doc = picked.length ? { type: "doc", content: stripIrMarks(picked) } : EMPTY_DOC;
+      await api.createClip(id, `${fmtTime(start)}–${fmtTime(end)} · ${element.title}`, start, end, JSON.stringify(doc));
+      notify(`Clip ${fmtTime(start)}–${fmtTime(end)} extracted`);
+      onChanged?.();
+    },
+    [editor, element.title, id, notify, onChanged],
+  );
+
+  /** Show where an extracted/clozed span lives and when it's due. */
+  const onReaderOver = useCallback(
+    (ev: React.MouseEvent) => {
+      const span = (ev.target as HTMLElement).closest("[data-extract],[data-cloze]") as HTMLElement | null;
+      const cid = span ? Number(span.dataset.extract ?? span.dataset.cloze) : 0;
+      if (!cid || !readerRef.current) {
+        peekTarget.current = null;
+        return setPeek(null);
+      }
+      if (peekTarget.current === cid) return;
+      peekTarget.current = cid;
+      const box = readerRef.current.getBoundingClientRect();
+      const r = span!.getBoundingClientRect();
+      const pos = { top: r.bottom - box.top + readerRef.current.scrollTop + 4, left: Math.max(8, Math.min(r.left - box.left, box.width - 300)) };
+      const show = (text: string) => peekTarget.current === cid && setPeek({ ...pos, text });
+      const cached = peekCache.current.get(cid);
+      if (cached) return show(cached);
+      api
+        .getElement(cid)
+        .then((el) => {
+          const due = el.topic?.due_day ?? el.item?.due_day;
+          const when = el.status !== "active" ? el.status : due == null ? "" : `due ${fmtDays(due - (today ?? due))}`;
+          const text = `${el.kind === "item" ? "Item" : "Extract"}: ${el.title}${when ? ` · ${when}` : ""}${el.children ? ` · ${el.children} children` : ""} — Ctrl+click to open`;
+          peekCache.current.set(cid, text);
+          show(text);
+        })
+        .catch(() => show("Deleted element"));
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
 
   const ignore = useCallback(() => {
     if (!editor || editor.state.selection.empty) return;
@@ -311,6 +407,7 @@ function TextTopicView({ element, mode, onFinish, onOpen, onChanged, onDelete, o
       if (ev.altKey && k === "z") return run(cloze);
       if (ev.altKey && k === "a") return run(addQa);
       if (ev.altKey && k === "i") return run(ignore);
+      if (ev.altKey && k === "o") return run(occlude);
       if (ev.altKey && ev.key === "\\") return run(deleteBefore);
       if ((ev.altKey && k === "r") || (ev.ctrlKey && ev.key === "F7")) return run(() => editor && setReadPoint(editor));
       if (!active) return;
@@ -320,7 +417,7 @@ function TextTopicView({ element, mode, onFinish, onOpen, onChanged, onDelete, o
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [active, addQa, askReschedule, cloze, deleteBefore, editor, extract, finish, ignore, setReadPoint]);
+  }, [active, addQa, askReschedule, cloze, deleteBefore, editor, extract, finish, ignore, occlude, setReadPoint]);
 
   return (
     <div className="element-view">
@@ -339,12 +436,14 @@ function TextTopicView({ element, mode, onFinish, onOpen, onChanged, onDelete, o
         <button onClick={() => editor && setReadPoint(editor)} title="Alt+R / Ctrl+F7">Read point</button>
         <button onClick={deleteBefore} title="Alt+\ — delete everything before the cursor">Delete before</button>
         <button onClick={splitByHeadings} title="One child topic per section (SuperMemo's Dismember)">Split</button>
+        <button onClick={occlude} title="Alt+O — click an image first; one item per covered region">Occlude</button>
         <span className="spacer" />
         <span className="muted small">
-          {progress && `${progress.pct}% · ~${progress.minutes} min left · `}interval {fmtDays(topic.interval_days)} · A-Factor{" "}
+          {progress && !isVideo && `${progress.pct}% · ~${progress.minutes} min left · `}interval {fmtDays(topic.interval_days)} · A-Factor{" "}
           {topic.afactor.toFixed(2)}
         </span>
       </div>
+      {isVideo && <VideoPanel ref={video} element={element} notify={notify} onClip={makeClip} />}
       <FormatBar editor={editor} />
       <div className="read-progress">
         <div style={{ width: `${progress?.pct ?? 0}%` }} />
@@ -354,20 +453,45 @@ function TextTopicView({ element, mode, onFinish, onOpen, onChanged, onDelete, o
         ref={readerRef}
         onScroll={() => {
           if (selBox && editor) placeToolbar(editor);
+          setPeek(null);
           requestAnimationFrame(updateProgress);
         }}
+        onMouseOver={onReaderOver}
+        onMouseLeave={() => ((peekTarget.current = null), setPeek(null))}
       >
+        {peek && (
+          <div className="peek small" style={{ top: peek.top, left: peek.left }}>
+            {peek.text}
+          </div>
+        )}
         {selBox && (
           <div className="sel-toolbar" style={{ top: selBox.top, left: selBox.left }} onMouseDown={(e) => e.preventDefault()}>
             <button onClick={extract}>Extract <kbd>Alt+X</kbd></button>
             <button onClick={cloze}>Cloze <kbd>Alt+Z</kbd></button>
             <button onClick={addQa}>Q&amp;A <kbd>Alt+A</kbd></button>
             <button onClick={ignore}>Ignore</button>
+            {selectedImage() && <button onClick={occlude}>Occlude <kbd>Alt+O</kbd></button>}
             <button onClick={() => editor && setReadPoint(editor)} title="Read point here">◆</button>
           </div>
         )}
         <EditorContent editor={editor} />
       </div>
+      {isVideo && editor?.isEmpty && (
+        <p className="muted small pad">No transcript. Watch, mark a start and an end to make clips, or paste a transcript here.</p>
+      )}
+      {occluding && (
+        <OcclusionDialog
+          src={occluding}
+          parentId={id}
+          title={element.title}
+          notify={notify}
+          onClose={() => setOccluding(null)}
+          onCreated={() => {
+            setOccluding(null);
+            onChanged?.();
+          }}
+        />
+      )}
       <footer className="actions">
         {active && (
           <>

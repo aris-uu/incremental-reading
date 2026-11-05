@@ -40,6 +40,11 @@ export interface TopicData {
   pdf_asset: string | null;
   pdf_page: number | null;
   text_len: number;
+  /** Video topics: YouTube id, clip range (clip extracts) and resume position, in seconds. */
+  video_id: string | null;
+  video_start: number | null;
+  video_end: number | null;
+  video_pos: number | null;
 }
 
 export interface ItemData {
@@ -73,7 +78,14 @@ export interface ElementFull {
   queue_size: number;
   /** Last scheduling event: create, read, grade, postpone, reschedule. */
   last_event: string | null;
+  /** Top-level root first, down to the parent. */
+  ancestors: { id: number; title: string }[];
+  pinned: boolean;
+  needs_work: boolean;
 }
+
+/** Items forgotten this many times are leeches: reformulate them. */
+export const LEECH_LAPSES = 4;
 
 export interface TreeNode {
   id: number;
@@ -86,7 +98,31 @@ export interface TreeNode {
   /** Topic without text: a note root/folder, or a finished article. */
   empty: boolean;
   pdf: boolean;
+  video: boolean;
   position: number;
+  lapses: number;
+  pinned: boolean;
+  needs_work: boolean;
+  /** Unix seconds. */
+  updated_at: number;
+}
+
+export interface SessionSummary {
+  topics_read: number;
+  items_graded: number;
+  items_again: number;
+  extracts: number;
+  items_created: number;
+  postponed: number;
+  done: number;
+}
+
+export interface ExportItem {
+  id: number;
+  question: string;
+  answer: string;
+  deck: string;
+  reference: string | null;
 }
 
 export interface InboxEntry {
@@ -158,6 +194,8 @@ export interface ImportInput {
   site?: string | null;
   inbox?: boolean;
   parent?: number | null;
+  /** YouTube id: makes an incremental-video topic. */
+  video_id?: string | null;
 }
 
 export const api = {
@@ -165,7 +203,7 @@ export const api = {
   fetchPage: (url: string) => invoke<{ html: string; final_url: string }>("fetch_page", { url }),
   createExtract: (parentId: number, title: string, docJson: string) =>
     invoke<number>("create_extract", { parentId, title, docJson }),
-  createItem: (parentId: number | null, itemType: "cloze" | "qa", question: string, answer: string) =>
+  createItem: (parentId: number | null, itemType: "cloze" | "qa" | "occlusion", question: string, answer: string) =>
     invoke<number>("create_item", { parentId, itemType, question, answer }),
   saveTopic: (id: number, docJson: string, readPoint: number | null) =>
     invoke<void>("save_topic", { id, docJson, readPoint }),
@@ -221,7 +259,33 @@ export const api = {
   extensionInfo: () => invoke<{ port: number; token: string }>("extension_info"),
   backup: () => invoke<string>("backup"),
   dataDir: () => invoke<string>("data_dir"),
+  setFlag: (id: number, flag: "pinned" | "needs_work", value: boolean) => invoke<void>("set_flag", { id, flag, value }),
+  sessionSummary: (sinceTs: number) => invoke<SessionSummary>("session_summary", { sinceTs }),
+  exportItems: (roots: number[] | null) => invoke<ExportItem[]>("export_items", { roots }),
+  exportApkg: (cards: { id: number; front: string; back: string; deck: string }[]) => invoke<string>("export_apkg", { cards }),
+  createClip: (parentId: number, title: string, start: number, end: number, docJson: string) =>
+    invoke<number>("create_clip", { parentId, title, start, end, docJson }),
+  setVideoPos: (id: number, pos: number) => invoke<void>("set_video_pos", { id, pos }),
 };
+
+/** Priority bands: a name for a stretch of the queue. */
+export const BANDS = [
+  { max: 10, name: "critical", label: "Critical" },
+  { max: 25, name: "high", label: "High" },
+  { max: 50, name: "normal", label: "Normal" },
+  { max: 80, name: "low", label: "Low" },
+  { max: 101, name: "someday", label: "Someday" },
+] as const;
+export const bandOf = (priority: number) => BANDS.find((b) => priority < b.max) ?? BANDS[BANDS.length - 1];
+
+/** Seconds → m:ss or h:mm:ss. */
+export function fmtTime(sec: number): string {
+  const s = Math.max(0, Math.floor(sec));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const ss = String(s % 60).padStart(2, "0");
+  return h ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
+}
 
 export function fmtDays(d: number): string {
   if (d <= 0) return "today";

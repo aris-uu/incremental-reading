@@ -11,7 +11,16 @@ export interface Appearance {
   width: number;
   /** Interface (menus, tree) font. */
   uiFont: string;
+  /** Colour theme; "auto" follows the system. */
+  theme: "auto" | "light" | "sepia" | "dark";
 }
+
+export const THEMES: Record<Appearance["theme"], string> = {
+  auto: "Follow the system",
+  light: "Light",
+  sepia: "Sepia (easy on the eyes)",
+  dark: "Dark",
+};
 
 export const FONTS: Record<string, { label: string; stack: string }> = {
   serif: { label: "Serif (Charter, Georgia)", stack: 'Charter, "Bitstream Charter", "Iowan Old Style", Georgia, Cambria, serif' },
@@ -28,7 +37,7 @@ export const UI_FONTS: Record<string, string> = {
   mono: 'ui-monospace, "Cascadia Code", Consolas, monospace',
 };
 
-export const DEFAULT_APPEARANCE: Appearance = { font: "serif", customFont: "", size: 17, lineHeight: 1.65, width: 72, uiFont: "system" };
+export const DEFAULT_APPEARANCE: Appearance = { font: "serif", customFont: "", size: 17, lineHeight: 1.65, width: 72, uiFont: "system", theme: "auto" };
 
 const KEY = "ir.appearance";
 
@@ -49,6 +58,8 @@ export function applyAppearance(a: Appearance) {
   root.setProperty("--reader-line", String(a.lineHeight));
   root.setProperty("--reader-width", `${a.width}ch`);
   root.setProperty("--ui-font", UI_FONTS[a.uiFont] ?? UI_FONTS.system);
+  if (a.theme === "auto") delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = a.theme;
 }
 
 export function saveAppearance(a: Appearance) {

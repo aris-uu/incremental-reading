@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import type { Notify } from "../notify";
 import { api, type PostponeReport, type PostponeSpec, type Settings } from "../api";
-import { DEFAULT_APPEARANCE, FONTS, loadAppearance, saveAppearance, type Appearance } from "../appearance";
+import { exportToAnki } from "../ankiExport";
+import { DEFAULT_APPEARANCE, FONTS, THEMES, loadAppearance, saveAppearance, type Appearance } from "../appearance";
 
 type Tab = "overload" | "settings" | "appearance" | "extension" | "backup";
 
@@ -28,7 +29,7 @@ export function ToolsDialog({ branch, onClose, onChanged, notify }: Props) {
         <div className="modal-tabs">
           {(["overload", "settings", "appearance", "extension", "backup"] as Tab[]).map((t) => (
             <button key={t} className={tab === t ? "active" : ""} onClick={() => setTab(t)}>
-              {{ overload: "Postpone & Mercy", settings: "Scheduling", appearance: "Appearance", extension: "Browser extension", backup: "Backup" }[t]}
+              {{ overload: "Postpone & Mercy", settings: "Scheduling", appearance: "Appearance", extension: "Browser extension", backup: "Backup & export" }[t]}
             </button>
           ))}
           <span className="spacer" />
@@ -228,6 +229,14 @@ function AppearanceTab() {
       <h3>Reading text</h3>
       <div className="form-grid">
         <label>
+          theme
+          <select value={a.theme} onChange={(e) => set({ theme: e.target.value as Appearance["theme"] })}>
+            {Object.entries(THEMES).map(([k, label]) => (
+              <option key={k} value={k}>{label}</option>
+            ))}
+          </select>
+        </label>
+        <label>
           font
           <select value={a.font} onChange={(e) => set({ font: e.target.value })}>
             {Object.entries(FONTS).map(([k, f]) => (
@@ -338,6 +347,27 @@ function BackupTab({ notify }: { notify: Notify }) {
           }
         >
           Back up now
+        </button>
+      </div>
+      <h3>Export to Anki</h3>
+      <p className="muted small">
+        Writes every active item to an <code>.apkg</code> in <code>exports</code>: one deck per top-level root, images included, math as MathJax.
+        Cards arrive as new cards; Anki schedules them from there. Exporting again updates the same notes instead of duplicating them.
+        To export one branch, right-click it in the tree.
+      </p>
+      <div className="row-actions">
+        <span className="spacer" />
+        <button
+          onClick={() =>
+            exportToAnki(null)
+              .then(({ path, count }) => {
+                setLast(path);
+                notify(`Exported ${count} items`);
+              })
+              .catch((e) => notify(`Anki export: ${e}`))
+          }
+        >
+          Export items to Anki…
         </button>
       </div>
     </div>
