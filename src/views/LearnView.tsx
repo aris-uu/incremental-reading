@@ -165,7 +165,7 @@ function Summary({ since }: { since: number }) {
 function ContinueReading({ onStart }: { onStart: (label: string, entries: QueueEntry[]) => void }) {
   const [list, setList] = useState<Started[]>([]);
   useEffect(() => {
-    api.continueReading().then(setList).catch(() => setList([]));
+    api.continueReading().then((l) => setList(l ?? [])).catch(() => setList([]));
   }, []);
   if (!list.length) return null;
   const entry = (s: Started): QueueEntry => ({ id: s.id, kind: "topic", title: s.title, priority: s.priority, due_day: s.due_day });
@@ -194,7 +194,7 @@ function ContinueReading({ onStart }: { onStart: (label: string, entries: QueueE
 function PriorityAudit() {
   const [list, setList] = useState<{ id: number; title: string; priority: number }[]>([]);
   useEffect(() => {
-    api.priorityAudit().then(setList).catch(() => setList([]));
+    api.priorityAudit().then((l) => setList(l ?? [])).catch(() => setList([]));
   }, []);
   if (!list.length) return null;
   const drop = (id: number) => setList((l) => l.filter((x) => x.id !== id));

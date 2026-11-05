@@ -1,3 +1,5 @@
+import { loadPrefs } from "./prefs";
+
 /** Keyboard shortcuts must not fire while typing in a field. */
 export const isTyping = (t: EventTarget | null) =>
   t instanceof HTMLElement && (t.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName));
@@ -9,8 +11,11 @@ export const isTyping = (t: EventTarget | null) =>
  * clicked by the same key.
  */
 export function isDefaultAction(ev: KeyboardEvent): boolean {
-  if (ev.key !== " " || ev.repeat || ev.ctrlKey || ev.altKey || ev.metaKey || ev.shiftKey) return false;
+  const enter = ev.key === "Enter" && loadPrefs().keys === "supermemo";
+  if ((ev.key !== " " && !enter) || ev.repeat || ev.ctrlKey || ev.altKey || ev.metaKey || ev.shiftKey) return false;
   if (isTyping(ev.target) || document.querySelector(".modal-backdrop")) return false;
+  // Keys pressed in the tree or the browser table belong to them.
+  if (ev.target instanceof HTMLElement && ev.target.closest(".sidebar, .browser-table, .context-menu")) return false;
   ev.preventDefault();
   return true;
 }

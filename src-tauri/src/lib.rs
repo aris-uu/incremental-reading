@@ -329,6 +329,14 @@ fn mercy(state: State<AppState>, root: Option<i64>, days: i64, simulate: bool) -
 }
 
 #[tauri::command]
+fn front_load(state: State<AppState>, root: Option<i64>, away: i64, lead: i64, simulate: bool) -> Result<Vec<i64>> {
+    if simulate {
+        return with(&state, |c| engine::front_load(c, root, away, lead, true, today()));
+    }
+    undoable(&state, "Before a break", |c| engine::upcoming_ids(c, root, away, today()), |c| engine::front_load(c, root, away, lead, false, today()))
+}
+
+#[tauri::command]
 fn get_stats(state: State<AppState>) -> Result<Stats> {
     with(&state, |c| engine::stats(c, today()))
 }
@@ -565,6 +573,7 @@ pub fn run() {
             ids_queue,
             postpone,
             mercy,
+            front_load,
             get_stats,
             full_stats,
             optimize,

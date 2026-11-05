@@ -499,6 +499,18 @@ export function BrowserView({ initialQuery, today, version, notify, onOpen, onRe
                     className={`${selected.has(r.id) ? "selected" : ""} ${cursor === r.id ? "cursor" : ""} ${r.status}`}
                     onClick={(e) => pick(r.id, e)}
                     onDoubleClick={() => onOpen(r.id)}
+                    draggable={sort.key === "rank" && !sort.desc && r.status === "active"}
+                    onDragStart={(e) => {
+                      if (!selected.has(r.id)) pick(r.id, { shiftKey: false, ctrlKey: false, metaKey: false });
+                      e.dataTransfer.setData("application/x-ir-rank", JSON.stringify(selected.has(r.id) ? sel : [r.id]));
+                    }}
+                    onDragOver={(e) => e.dataTransfer.types.includes("application/x-ir-rank") && r.status === "active" && e.preventDefault()}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      const ids: number[] = JSON.parse(e.dataTransfer.getData("application/x-ir-rank") || "[]").filter((x: number) => x !== r.id);
+                      // Take the target's place in the queue (it moves down one).
+                      if (ids.length) void run(`Moved ${ids.length} to #${Math.round(r.prank)}`, () => api.bulk(ids, "priority", r.priority));
+                    }}
                     onContextMenu={(e) => {
                       e.preventDefault();
                       if (!selected.has(r.id)) pick(r.id, { shiftKey: false, ctrlKey: false, metaKey: false });

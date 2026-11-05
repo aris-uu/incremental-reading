@@ -275,6 +275,7 @@ export const api = {
   branchesQueue: (roots: number[], dueOnly: boolean) => invoke<QueueEntry[]>("branches_queue", { roots, dueOnly }),
   idsQueue: (ids: number[]) => invoke<QueueEntry[]>("ids_queue", { ids }),
   postpone: (spec: PostponeSpec, simulate: boolean) => invoke<PostponeReport>("postpone", { spec, simulate }),
+  frontLoad: (root: number | null, away: number, lead: number, simulate: boolean) => invoke<number[]>("front_load", { root, away, lead, simulate }),
   mercy: (root: number | null, days: number, simulate: boolean) => invoke<number[]>("mercy", { root, days, simulate }),
   getElement: (id: number) => invoke<ElementFull>("get_element", { id }),
   getTree: () => invoke<TreeNode[]>("get_tree"),

@@ -5,6 +5,7 @@ import { RichField } from "../editor/RichField";
 import { ElementHeader } from "./ElementHeader";
 import { lintItem } from "../lint";
 import { isDefaultAction } from "../keys";
+import { loadPrefs } from "../prefs";
 import { parseDoc } from "../editor/extensions";
 
 /** Text of a ProseMirror node (JSON). */
@@ -94,6 +95,8 @@ export function ItemView({ element, mode, onFinish, onOpen, onChanged, onDelete,
   const timer = useRef<number | undefined>(undefined);
   const [hints, setHints] = useState(() => lintItem(item.question, item.answer));
   const [needsWork, setNeedsWork] = useState(element.needs_work);
+  const twoButton = loadPrefs().grading === "2";
+  const hasList = /"type":"(bulletList|orderedList)"/.test(item.answer);
   /** Time on card, for the cost statistics. */
   const openedAt = useRef(Date.now());
   const cardRef = useRef<HTMLDivElement>(null);
@@ -134,6 +137,38 @@ export function ItemView({ element, mode, onFinish, onOpen, onChanged, onDelete,
   };
 
   useEffect(() => () => void save(), [save]);
+
+  /** Alt+P: move the item in the priority queue. */
+  const askPriority = useCallback(() => {
+    const v = window.prompt("Priority (0 = most important)", String(Math.round(element.priority)));
+    const n = v == null ? NaN : Number(v);
+    if (!Number.isNaN(n)) void api.setPriority(element.id, Math.max(0, Math.min(100, n))).then(() => (notify(`Priority ${n}%`, { undo: true }), onChanged?.()));
+  }, [element.id, element.priority, notify, onChanged]);
+
+  /** A list in the answer is hard to recall: one item per entry, the original retired. */
+  const splitList = useCallback(async () => {
+    await save();
+    let doc: any;
+    try {
+      doc = JSON.parse(a.current);
+    } catch {
+      return;
+    }
+    const entries: any[] = [];
+    const walk = (n: any) => (n.type === "listItem" ? entries.push(n) : (n.content ?? []).forEach(walk));
+    walk(doc);
+    if (entries.length < 2) return notify("No list with several entries in the answer");
+    if (!window.confirm(`Make ${entries.length} items, one per list entry, and retire this one?`)) return;
+    const qDoc = JSON.parse(q.current);
+    for (const [i, li] of entries.entries()) {
+      const question = { ...qDoc, content: [...(qDoc.content ?? []), { type: "paragraph", content: [{ type: "text", text: `(entry ${i + 1} of ${entries.length})` }] }] };
+      const answer = { type: "doc", content: li.content?.length ? li.content : [{ type: "paragraph" }] };
+      await api.createItem(element.parent_id, "qa", JSON.stringify(question), JSON.stringify(answer));
+    }
+    await api.dismiss(element.id);
+    notify(`Split into ${entries.length} items; the original is dismissed`, { undo: true });
+    onFinish("dismiss");
+  }, [element.id, element.parent_id, notify, onFinish, save]);
 
   /** A sibling item under the same parent (e.g. when splitting a leech in two). */
   const addSibling = useCallback(async () => {
@@ -195,6 +230,7 @@ export function ItemView({ element, mode, onFinish, onOpen, onChanged, onDelete,
       if (ev.ctrlKey && ev.key.toLowerCase() === "j") return ev.preventDefault(), askReschedule();
       if (ev.altKey && ev.key.toLowerCase() === "w") return ev.preventDefault(), void toggleNeedsWork();
       if (ev.ctrlKey && ev.key.toLowerCase() === "e") return ev.preventDefault(), editQuestion();
+      if (ev.altKey && ev.key.toLowerCase() === "p") return ev.preventDefault(), askPriority();
       if (ev.key === "Escape" && isTyping(ev.target)) return (ev.target as HTMLElement).blur();
       // Space: show the answer, then grade Good.
       if (isDefaultAction(ev)) {
@@ -208,12 +244,13 @@ export function ItemView({ element, mode, onFinish, onOpen, onChanged, onDelete,
         setShown(true);
       } else if (shown && canGrade && ["1", "2", "3", "4"].includes(ev.key)) {
         ev.preventDefault();
-        void grade(Number(ev.key) as 1 | 2 | 3 | 4);
+        // Pass/fail mode: 1 = Again, any other number = Good.
+        void grade(twoButton ? (ev.key === "1" ? 1 : 3) : (Number(ev.key) as 1 | 2 | 3 | 4));
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [askReschedule, canGrade, editQuestion, grade, shown, toggleNeedsWork]);
+  }, [askPriority, askReschedule, canGrade, editQuestion, grade, shown, toggleNeedsWork, twoButton]);
 
   return (
     <div className="element-view">
@@ -266,7 +303,7 @@ export function ItemView({ element, mode, onFinish, onOpen, onChanged, onDelete,
       </div>
       <footer className="actions">
         {shown && active &&
-          GRADES.map(({ g, label }) => (
+          GRADES.filter(({ g }) => !twoButton || g === 1 || g === 3).map(({ g, label }) => (
             <button
               key={g}
               className={`grade g${g}`}
@@ -281,6 +318,7 @@ export function ItemView({ element, mode, onFinish, onOpen, onChanged, onDelete,
             </button>
           ))}
         <button disabled={busy} onClick={askReschedule} title="Ctrl+J">Reschedule…</button>
+        {hasList && <button onClick={() => void splitList()} title="One item per list entry">Split list</button>}
         {item.item_type === "qa" && (
           <button onClick={() => void addReverse()} title="Also ask the other way round, as a separate item">Add reverse</button>
         )}

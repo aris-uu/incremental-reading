@@ -1691,6 +1691,32 @@ pub fn mercy(conn: &Connection, root: Option<i64>, spread_days: i64, simulate: b
     Ok(per_day)
 }
 
+/// Before a break: everything that would come due in the next `away` days
+/// (in a branch, or all) is pulled forward and spread over the next `lead`
+/// days, most important first. Early reviews are fine: FSRS accounts for the
+/// shorter elapsed time. Returns how many land on each lead day.
+pub fn front_load(conn: &Connection, root: Option<i64>, away: i64, lead: i64, simulate: bool, day: i64) -> Result<Vec<i64>> {
+    let lead = lead.max(1);
+    let rows: Vec<DueRow> = select_active(conn, root, Some(day + away.max(1)))?.into_iter().filter(|r| r.due_day > day).collect();
+    let n = rows.len() as i64;
+    let mut per_day = vec![0i64; lead as usize];
+    for (i, r) in rows.iter().enumerate() {
+        let offset = (i as i64 * lead) / n.max(1);
+        per_day[offset as usize] += 1;
+        if !simulate {
+            let table = if r.kind == "topic" { "topic" } else { "item" };
+            conn.execute(&format!("UPDATE {table} SET due_day=?2 WHERE element_id=?1"), params![r.id, day + offset]).map_err(e)?;
+            simple_log(conn, r.id, day, "reschedule", Some(offset))?;
+        }
+    }
+    Ok(per_day)
+}
+
+/// Elements `front_load` would move (for undo).
+pub fn upcoming_ids(conn: &Connection, root: Option<i64>, away: i64, day: i64) -> Result<Vec<i64>> {
+    Ok(select_active(conn, root, Some(day + away.max(1)))?.into_iter().filter(|r| r.due_day > day).map(|r| r.id).collect())
+}
+
 // ---------- Search ----------
 
 /// Full-text search over titles and text. Each word matches as a prefix.
@@ -2924,5 +2950,21 @@ mod tests {
         let st = full_stats(&c, 101).unwrap();
         assert_eq!(st.seconds_per_review, Some(4.2));
         assert_eq!(st.retention_by_band.len(), 4);
+    }
+
+    #[test]
+    fn front_load_pulls_upcoming_work_forward() {
+        let c = db::open_in_memory().unwrap();
+        let a = import(&c, "a", 10.0, 100);
+        let b = import(&c, "b", 20.0, 100);
+        reschedule(&c, a, 5, 100).unwrap();
+        reschedule(&c, b, 9, 100).unwrap();
+        assert_eq!(front_load(&c, None, 7, 2, true, 100).unwrap(), vec![1, 0]);
+        assert_eq!(upcoming_ids(&c, None, 7, 100).unwrap(), vec![a]);
+        front_load(&c, None, 10, 2, false, 100).unwrap();
+        let due = |id| get_element(&c, id).unwrap().topic.unwrap().due_day;
+        // Most important first: it gets the earlier day.
+        let (first, second) = if priority_of(&c, a).unwrap() < priority_of(&c, b).unwrap() { (a, b) } else { (b, a) };
+        assert_eq!((due(first), due(second)), (100, 101));
     }
 }

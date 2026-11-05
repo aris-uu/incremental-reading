@@ -15,17 +15,19 @@ function whyChips(el: ElementFull, today: number | null, rank: number, size: num
   if (el.item && el.item.reps === 0) out.push("new item");
   else if (el.topic && el.topic.last_day == null && el.status === "active") out.push("first read");
   if (el.last_event === "postpone") out.push("was postponed");
+  if (el.topic && el.parent_id != null && el.children >= 2 && el.status === "active")
+    out.push(`${el.children} made from it — Done! once it has nothing more to give`);
   if (el.last_event === "reschedule") out.push("rescheduled by you");
   return out;
 }
 
 /** Tags: concepts that cut across sources (`tag:x` in the browser). */
 function TagEditor({ id, tags, onChanged }: { id: number; tags: string[]; onChanged?: () => void }) {
-  const [list, setList] = useState(tags);
+  const [list, setList] = useState(tags ?? []);
   const [adding, setAdding] = useState(false);
   const [text, setText] = useState("");
   const [known, setKnown] = useState<string[]>([]);
-  useEffect(() => setList(tags), [id, tags]);
+  useEffect(() => setList(tags ?? []), [id, tags]);
   const save = async (next: string[]) => {
     await api.setTags(id, next);
     setList(next);

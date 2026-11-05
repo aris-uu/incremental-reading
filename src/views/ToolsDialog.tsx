@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { Notify } from "../notify";
 import { api, type Cram, type PostponeReport, type PostponeSpec, type Settings } from "../api";
 import { exportToAnki } from "../ankiExport";
+import { loadPrefs, savePrefs, type Prefs } from "../prefs";
 import { DEFAULT_APPEARANCE, FONTS, THEMES, loadAppearance, saveAppearance, type Appearance } from "../appearance";
 
 type Tab = "overload" | "settings" | "appearance" | "extension" | "backup";
@@ -49,6 +50,55 @@ export function ToolsDialog({ branch, onClose, onChanged, notify }: Props) {
         </div>
       </div>
     </div>
+  );
+}
+
+/** Pull work forward before a vacation, so it isn't waiting when you're back. */
+function BeforeBreak({ root, onChanged, notify }: { root: number | null; onChanged: () => void; notify: Notify }) {
+  const [away, setAway] = useState(7);
+  const [lead, setLead] = useState(3);
+  const [sim, setSim] = useState<number[] | null>(null);
+  useEffect(() => {
+    api.frontLoad(root, away, lead, true).then(setSim);
+  }, [root, away, lead]);
+  return (
+    <>
+      <h3>Before a break</h3>
+      <p className="muted small">Everything that would come due while you're away is spread over the days before you leave, most important first.</p>
+      <div className="form-grid">
+        <label>
+          away for <input type="number" min={1} max={120} value={away} onChange={(e) => setAway(Math.max(1, Number(e.target.value)))} /> days
+        </label>
+        <label>
+          starting in <input type="number" min={1} max={30} value={lead} onChange={(e) => setLead(Math.max(1, Number(e.target.value)))} /> days
+        </label>
+      </div>
+      {sim && sim.length > 0 && (
+        <div className="mercy-bars">
+          {sim.map((n, i) => (
+            <div key={i} className="mercy-bar" title={`day +${i}: ${n}`}>
+              <div style={{ height: `${(n / Math.max(1, ...sim)) * 100}%` }} />
+              <span>{n}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="row-actions">
+        <span className="muted small">{sim ? `${sim.reduce((a, b) => a + b, 0)} elements to bring forward` : "…"}</span>
+        <button
+          className="primary"
+          disabled={!sim || sim.every((n) => n === 0)}
+          onClick={async () => {
+            await api.frontLoad(root, away, lead, false);
+            notify(`Brought forward into the next ${lead} days`, { undo: true });
+            onChanged();
+            setSim(await api.frontLoad(root, away, lead, true));
+          }}
+        >
+          Bring forward
+        </button>
+      </div>
+    </>
   );
 }
 
@@ -113,6 +163,8 @@ function Overload({ branch, onChanged, notify }: Omit<Props, "onClose">) {
         <span className="muted small">{sim ? `Would postpone ${sim.items} items and ${sim.topics} topics` : "…"}</span>
         <button className="primary" disabled={!sim || sim.items + sim.topics === 0} onClick={runPostpone}>Postpone</button>
       </div>
+
+      <BeforeBreak root={root} onChanged={onChanged} notify={notify} />
 
       <h3>Mercy</h3>
       <p className="muted small">Spreads everything due evenly over the next days, most important first (today gets the first share).</p>
@@ -326,6 +378,7 @@ function AppearanceTab() {
           <span className="mono">{a.width}ch</span>
         </label>
       </div>
+      <ReviewPrefs />
       <h3>Interface</h3>
       <div className="form-grid">
         <label>
@@ -349,6 +402,39 @@ function AppearanceTab() {
         <button onClick={() => (setA(DEFAULT_APPEARANCE), saveAppearance(DEFAULT_APPEARANCE))}>Reset to defaults</button>
       </div>
     </div>
+  );
+}
+
+function ReviewPrefs() {
+  const [p, setP] = useState<Prefs>(loadPrefs);
+  const set = (patch: Partial<Prefs>) => {
+    const next = { ...p, ...patch };
+    setP(next);
+    savePrefs(next);
+  };
+  return (
+    <>
+      <h3>Review</h3>
+      <div className="form-grid">
+        <label>
+          grading
+          <select value={p.grading} onChange={(e) => set({ grading: e.target.value as Prefs["grading"] })}>
+            <option value="4">Again · Hard · Good · Easy</option>
+            <option value="2">Pass/fail: Again · Good</option>
+          </select>
+        </label>
+        <label>
+          keys
+          <select value={p.keys} onChange={(e) => set({ keys: e.target.value as Prefs["keys"] })}>
+            <option value="modern">Modern (Space = next)</option>
+            <option value="supermemo">SuperMemo (Enter = next too)</option>
+          </select>
+        </label>
+      </div>
+      <p className="muted small">
+        Both key sets share SuperMemo's Alt+X extract, Alt+Z cloze, Alt+P priority, Ctrl+J reschedule, Ctrl+Shift+Enter Done!.
+      </p>
+    </>
   );
 }
 

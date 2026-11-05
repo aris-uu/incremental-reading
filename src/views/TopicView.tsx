@@ -420,6 +420,17 @@ function TextTopicView({ element, mode, onFinish, onOpen, onChanged, onDelete, o
     [autoReadPoint, busy, id, notify, onFinish, save],
   );
 
+  /** Not understood yet: come back in 100 days, and read it less often from then on. */
+  const dontGetIt = async () => {
+    await api.setAfactor(element.id, Math.min(5, (topic.afactor ?? 1.5) + 0.2)).catch(() => {});
+    await finish("rescheduled", 100);
+  };
+  const askPriority = () => {
+    const v = window.prompt("Priority (0 = most important)", String(Math.round(element.priority)));
+    const n = v == null ? NaN : Number(v);
+    if (!Number.isNaN(n)) void api.setPriority(element.id, Math.max(0, Math.min(100, n))).then(() => (notify(`Priority ${n}%`, { undo: true }), onChanged?.()));
+  };
+
   const askReschedule = useCallback(() => {
     const v = window.prompt("Next review in how many days?", String(Math.max(1, topic.interval_days)));
     const n = v == null ? NaN : parseInt(v, 10);
@@ -440,6 +451,7 @@ function TextTopicView({ element, mode, onFinish, onOpen, onChanged, onDelete, o
       if ((ev.altKey && k === "r") || (ev.ctrlKey && ev.key === "F7")) return run(() => editor && setReadPoint(editor));
       // Esc leaves the text, so Space works as Next again.
       if (ev.key === "Escape" && editor?.isFocused && !selBox) return run(() => editor.commands.blur());
+      if (ev.altKey && k === "p") return run(askPriority);
       if (!active) return;
       // Space: Next (in the queue only; while browsing it would mark the topic read by accident).
       if (mode === "learn" && isDefaultAction(ev)) return void finish("next");
@@ -556,7 +568,7 @@ function TextTopicView({ element, mode, onFinish, onOpen, onChanged, onDelete, o
         )}
         <button disabled={busy} onClick={askReschedule} title="Ctrl+J">Reschedule…</button>
         {active && (
-          <button disabled={busy} onClick={() => finish("rescheduled", 100)} title="Come back in 100 days">
+          <button disabled={busy} onClick={() => void dontGetIt()} title="Come back in 100 days">
             Don't get it · +100d
           </button>
         )}
