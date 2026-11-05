@@ -155,7 +155,19 @@ UPDATE element SET prank = (
 CREATE INDEX element_prank ON element(prank);
 "#;
 
-pub const LATEST: i64 = 5;
+/// Schema version 6: per-element flags and video topics. `pinned` keeps a root at the top of
+/// the tree; `needs_work` marks an item to reformulate (it keeps its schedule).
+const SCHEMA_V6: &str = r#"
+ALTER TABLE element ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE element ADD COLUMN needs_work INTEGER NOT NULL DEFAULT 0;
+-- Incremental video: a YouTube video id, a clip range (extracts) and the resume position, in seconds.
+ALTER TABLE topic ADD COLUMN video_id TEXT;
+ALTER TABLE topic ADD COLUMN video_start REAL;
+ALTER TABLE topic ADD COLUMN video_end REAL;
+ALTER TABLE topic ADD COLUMN video_pos REAL;
+"#;
+
+pub const LATEST: i64 = 6;
 
 pub fn open(path: &std::path::Path) -> rusqlite::Result<(Connection, i64)> {
     let conn = Connection::open(path)?;
@@ -190,6 +202,9 @@ fn init(conn: &Connection) -> rusqlite::Result<i64> {
     }
     if version < 5 {
         conn.execute_batch(&format!("BEGIN; {SCHEMA_V5} PRAGMA user_version = 5; COMMIT;"))?;
+    }
+    if version < 6 {
+        conn.execute_batch(&format!("BEGIN; {SCHEMA_V6} PRAGMA user_version = 6; COMMIT;"))?;
     }
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
     Ok(version)

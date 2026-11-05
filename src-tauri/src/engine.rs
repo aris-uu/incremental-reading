@@ -148,6 +148,11 @@ pub struct TopicData {
     pub pdf_asset: Option<String>,
     pub pdf_page: Option<i64>,
     pub text_len: i64,
+    /// Video topics: YouTube id, clip range for clip extracts, resume position (seconds).
+    pub video_id: Option<String>,
+    pub video_start: Option<f64>,
+    pub video_end: Option<f64>,
+    pub video_pos: Option<f64>,
 }
 
 #[derive(Serialize, Debug)]
@@ -183,6 +188,16 @@ pub struct ElementFull {
     pub queue_size: i64,
     /// Why it might be in today's queue: the last scheduling event.
     pub last_event: Option<String>,
+    /// Path from the top-level root down to the parent (breadcrumb).
+    pub ancestors: Vec<Crumb>,
+    pub pinned: bool,
+    pub needs_work: bool,
+}
+
+#[derive(Serialize, Debug)]
+pub struct Crumb {
+    pub id: i64,
+    pub title: String,
 }
 
 #[derive(Serialize, Debug)]
@@ -197,8 +212,14 @@ pub struct TreeNode {
     /// A topic with no text (a note root or folder, or a finished article).
     pub empty: bool,
     pub pdf: bool,
+    pub video: bool,
     /// Manual order among siblings.
     pub position: f64,
+    /// Items only: times forgotten (the UI flags 4 or more as a leech).
+    pub lapses: i64,
+    pub pinned: bool,
+    pub needs_work: bool,
+    pub updated_at: i64,
 }
 
 #[derive(Deserialize, Debug, Default)]
@@ -215,6 +236,9 @@ pub struct ImportInput {
     /// Import under an existing topic (folder imports, EPUB chapters).
     #[serde(default)]
     pub parent: Option<i64>,
+    /// YouTube video id: an incremental-video topic (`doc_json` holds the transcript, if any).
+    #[serde(default)]
+    pub video_id: Option<String>,
 }
 
 #[derive(Serialize, Debug)]
@@ -446,9 +470,9 @@ pub fn index(conn: &Connection, id: i64) -> Result<()> {
     let body = match (doc, q, a) {
         (Some(d), _, _) => {
             let text = doc_text(&d);
-            // A PDF topic has its content in the file, not the document.
+            // A PDF or video topic has its content in the file, not (only) the document.
             conn.execute(
-                "UPDATE topic SET text_len = CASE WHEN pdf_asset IS NOT NULL THEN MAX(?2, 1) ELSE ?2 END WHERE element_id=?1",
+                "UPDATE topic SET text_len = CASE WHEN pdf_asset IS NOT NULL OR video_id IS NOT NULL THEN MAX(?2, 1) ELSE ?2 END WHERE element_id=?1",
                 params![id, text.chars().count() as i64],
             )
             .map_err(e)?;
@@ -490,8 +514,8 @@ pub fn import_topic(conn: &Connection, input: &ImportInput, day: i64) -> Result<
     let id = insert_element(conn, "topic", input.parent, &title, Place::Percent(input.priority), status)?;
     let text_len = doc_text(&input.doc_json).len();
     conn.execute(
-        "INSERT INTO topic (element_id, doc_json, afactor, interval_days, due_day) VALUES (?1,?2,?3,0,?4)",
-        params![id, input.doc_json, initial_afactor(text_len, input.priority), day],
+        "INSERT INTO topic (element_id, doc_json, afactor, interval_days, due_day, video_id) VALUES (?1,?2,?3,0,?4,?5)",
+        params![id, input.doc_json, initial_afactor(text_len.max(if input.video_id.is_some() { 5000 } else { 0 }), input.priority), day, input.video_id],
     )
     .map_err(e)?;
     conn.execute(
@@ -880,6 +904,33 @@ pub fn import_pdf(conn: &Connection, input: &PdfImport, day: i64) -> Result<i64>
     simple_log(conn, id, day, "create", Some(0))?;
     index(conn, id)?;
     Ok(id)
+}
+
+// ---------- Video topics ----------
+
+/// Clip extract from a video topic: a child topic playing `start..end` of the
+/// same video, with the matching part of the transcript (if any) as its text.
+pub fn create_clip(conn: &Connection, parent: i64, title: &str, start: f64, end: f64, doc_json: &str, day: i64) -> Result<i64> {
+    let video: Option<String> = conn.query_row("SELECT video_id FROM topic WHERE element_id=?1", [parent], |r| r.get(0)).map_err(e)?;
+    let video = video.ok_or("Not a video topic")?;
+    let (start, end) = (start.max(0.0), end.max(0.0));
+    if end <= start {
+        return Err("A clip needs an end after its start".into());
+    }
+    let id = create_extract(conn, parent, title, doc_json, day)?;
+    conn.execute(
+        "UPDATE topic SET video_id=?2, video_start=?3, video_end=?4, video_pos=?3 WHERE element_id=?1",
+        params![id, video, start, end],
+    )
+    .map_err(e)?;
+    index(conn, id)?;
+    Ok(id)
+}
+
+/// Resume position (seconds), the video equivalent of a read point.
+pub fn set_video_pos(conn: &Connection, id: i64, pos: f64) -> Result<()> {
+    conn.execute("UPDATE topic SET video_pos=?2 WHERE element_id=?1", params![id, pos.max(0.0)]).map_err(e)?;
+    Ok(())
 }
 
 pub fn set_pdf_page(conn: &Connection, id: i64, page: i64) -> Result<()> {
@@ -1519,7 +1570,7 @@ pub fn get_element(conn: &Connection, id: i64) -> Result<ElementFull> {
     let mut el = conn
         .query_row(
             "SELECT e.id, e.kind, e.parent_id, p.title, e.title, e.priority, e.status,
-                    (SELECT COUNT(*) FROM element c WHERE c.parent_id = e.id)
+                    (SELECT COUNT(*) FROM element c WHERE c.parent_id = e.id), e.pinned != 0, e.needs_work != 0
              FROM element e LEFT JOIN element p ON p.id = e.parent_id WHERE e.id = ?1",
             [id],
             |r| {
@@ -1538,6 +1589,9 @@ pub fn get_element(conn: &Connection, id: i64) -> Result<ElementFull> {
                     queue_rank: 0,
                     queue_size: 0,
                     last_event: None,
+                    ancestors: Vec::new(),
+                    pinned: r.get(8)?,
+                    needs_work: r.get(9)?,
                 })
             },
         )
@@ -1555,7 +1609,7 @@ pub fn get_element(conn: &Connection, id: i64) -> Result<ElementFull> {
         .query_row(
             "SELECT doc_json, read_point, afactor, interval_days, due_day, last_day,
                     EXISTS(SELECT 1 FROM topic_archive a WHERE a.element_id = topic.element_id),
-                    pdf_asset, pdf_page, text_len
+                    pdf_asset, pdf_page, text_len, video_id, video_start, video_end, video_pos
              FROM topic WHERE element_id=?1",
             [id],
             |r| {
@@ -1570,6 +1624,10 @@ pub fn get_element(conn: &Connection, id: i64) -> Result<ElementFull> {
                     pdf_asset: r.get(7)?,
                     pdf_page: r.get(8)?,
                     text_len: r.get(9)?,
+                    video_id: r.get(10)?,
+                    video_start: r.get(11)?,
+                    video_end: r.get(12)?,
+                    video_pos: r.get(13)?,
                 })
             },
         )
@@ -1598,14 +1656,133 @@ pub fn get_element(conn: &Connection, id: i64) -> Result<ElementFull> {
         .optional()
         .map_err(e)?;
     el.reference = reference(conn, id)?;
+    el.ancestors = ancestors(conn, id)?;
     Ok(el)
+}
+
+/// Ancestors of `id`, top-level root first (excluding `id` itself).
+pub fn ancestors(conn: &Connection, id: i64) -> Result<Vec<Crumb>> {
+    let mut stmt = conn
+        .prepare(
+            "WITH RECURSIVE up(id, parent_id, depth) AS (
+                 SELECT id, parent_id, 0 FROM element WHERE id = ?1
+                 UNION ALL
+                 SELECT e.id, e.parent_id, up.depth + 1 FROM element e JOIN up ON e.id = up.parent_id WHERE up.depth < 200
+             )
+             SELECT e.id, e.title FROM up JOIN element e ON e.id = up.id WHERE up.depth > 0 ORDER BY up.depth DESC",
+        )
+        .map_err(e)?;
+    let rows = stmt
+        .query_map([id], |r| Ok(Crumb { id: r.get(0)?, title: r.get(1)? }))
+        .map_err(e)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(e);
+    rows
+}
+
+/// Set a boolean flag on an element: `pinned` or `needs_work`.
+pub fn set_flag(conn: &Connection, id: i64, flag: &str, value: bool) -> Result<()> {
+    let col = match flag {
+        "pinned" => "pinned",
+        "needs_work" => "needs_work",
+        other => return Err(format!("unknown flag {other}")),
+    };
+    conn.execute(&format!("UPDATE element SET {col}=?2 WHERE id=?1"), params![id, value as i64]).map_err(e)?;
+    touch(conn, id)
+}
+
+/// What a learning session achieved, from the review log since `since_ts`.
+#[derive(Serialize, Debug, Default, PartialEq)]
+pub struct SessionSummary {
+    pub topics_read: i64,
+    pub items_graded: i64,
+    pub items_again: i64,
+    pub extracts: i64,
+    pub items_created: i64,
+    pub postponed: i64,
+    pub done: i64,
+}
+
+pub fn session_summary(conn: &Connection, since_ts: i64) -> Result<SessionSummary> {
+    conn.query_row(
+        "SELECT COALESCE(SUM(l.kind='read'), 0),
+                COALESCE(SUM(l.kind='grade'), 0),
+                COALESCE(SUM(l.kind='grade' AND l.grade=1), 0),
+                COALESCE(SUM(l.kind='create' AND e.kind='topic' AND e.parent_id IS NOT NULL), 0),
+                COALESCE(SUM(l.kind='create' AND e.kind='item'), 0),
+                COALESCE(SUM(l.kind IN ('postpone','reschedule')), 0),
+                COALESCE(SUM(l.kind IN ('done','dismissed')), 0)
+         FROM review_log l LEFT JOIN element e ON e.id = l.element_id WHERE l.ts >= ?1",
+        [since_ts],
+        |r| {
+            Ok(SessionSummary {
+                topics_read: r.get(0)?,
+                items_graded: r.get(1)?,
+                items_again: r.get(2)?,
+                extracts: r.get(3)?,
+                items_created: r.get(4)?,
+                postponed: r.get(5)?,
+                done: r.get(6)?,
+            })
+        },
+    )
+    .map_err(e)
+}
+
+/// An item as the Anki exporter needs it: both sides (ProseMirror JSON), the
+/// deck (its top-level root) and the reference to show on the back.
+#[derive(Serialize, Debug)]
+pub struct ExportItem {
+    pub id: i64,
+    pub question: String,
+    pub answer: String,
+    pub deck: String,
+    pub reference: Option<String>,
+}
+
+/// Active items, optionally only those in the given branches.
+pub fn export_items(conn: &Connection, roots: Option<&[i64]>) -> Result<Vec<ExportItem>> {
+    let wanted: Option<std::collections::HashSet<i64>> = match roots {
+        None => None,
+        Some(rs) => {
+            let mut set = std::collections::HashSet::new();
+            for &r in rs {
+                for row in select_active(conn, Some(r), None)? {
+                    set.insert(row.id);
+                }
+            }
+            Some(set)
+        }
+    };
+    let mut stmt = conn
+        .prepare("SELECT e.id, i.question, i.answer FROM element e JOIN item i ON i.element_id = e.id WHERE e.status='active' ORDER BY e.prank, e.id")
+        .map_err(e)?;
+    let rows = stmt
+        .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))
+        .map_err(e)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(e)?;
+    let mut out = Vec::new();
+    for (id, question, answer) in rows {
+        if wanted.as_ref().is_some_and(|w| !w.contains(&id)) {
+            continue;
+        }
+        let root = ancestors(conn, id)?.into_iter().next().map(|c| c.title);
+        let reference = reference(conn, id)?.map(|r| match r.url {
+            Some(u) => format!("{} — {u}", r.title),
+            None => r.title,
+        });
+        out.push(ExportItem { id, question, answer, deck: root.unwrap_or_else(|| "Unsorted".into()), reference });
+    }
+    Ok(out)
 }
 
 pub fn tree(conn: &Connection) -> Result<Vec<TreeNode>> {
     let mut stmt = conn
         .prepare(
             "SELECT e.id, e.parent_id, e.kind, e.title, e.priority, e.status, COALESCE(t.due_day, i.due_day),
-                    t.text_len = 0, t.pdf_asset IS NOT NULL, e.position
+                    t.text_len = 0, t.pdf_asset IS NOT NULL, e.position,
+                    COALESCE(i.lapses, 0), e.pinned != 0, e.needs_work != 0, e.updated_at, t.video_id IS NOT NULL
              FROM element e
              LEFT JOIN topic t ON t.element_id = e.id
              LEFT JOIN item  i ON i.element_id = e.id
@@ -1626,6 +1803,11 @@ pub fn tree(conn: &Connection) -> Result<Vec<TreeNode>> {
                 empty: r.get::<_, Option<bool>>(7)?.unwrap_or(false),
                 pdf: r.get::<_, Option<bool>>(8)?.unwrap_or(false),
                 position: r.get(9)?,
+                lapses: r.get(10)?,
+                pinned: r.get(11)?,
+                needs_work: r.get(12)?,
+                updated_at: r.get(13)?,
+                video: r.get::<_, Option<bool>>(14)?.unwrap_or(false),
             })
         })
         .map_err(e)?
@@ -2201,5 +2383,74 @@ mod tests {
         assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), db::LATEST);
         drop(c);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn flags_breadcrumbs_and_export() {
+        let c = db::open_in_memory().unwrap();
+        let src = import(&c, "Biology", 10.0, 100);
+        let ex = create_extract(&c, src, "Cells", &doc("Cells are small."), 100).unwrap();
+        let it = item(&c, ex, "Cells are [...]", 100);
+        let crumbs: Vec<i64> = get_element(&c, it).unwrap().ancestors.iter().map(|a| a.id).collect();
+        assert_eq!(crumbs, vec![src, ex]);
+
+        set_flag(&c, src, "pinned", true).unwrap();
+        set_flag(&c, it, "needs_work", true).unwrap();
+        assert!(set_flag(&c, it, "bogus", true).is_err());
+        let t = tree(&c).unwrap();
+        assert!(t.iter().find(|n| n.id == src).unwrap().pinned);
+        assert!(t.iter().find(|n| n.id == it).unwrap().needs_work);
+        assert!(get_element(&c, it).unwrap().needs_work);
+
+        let all = export_items(&c, None).unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].deck, "Biology");
+        assert!(all[0].reference.as_deref().unwrap().contains("example.org"));
+        let other = import(&c, "Other", 50.0, 100);
+        assert!(export_items(&c, Some(&[other])).unwrap().is_empty());
+        assert_eq!(export_items(&c, Some(&[ex])).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn session_summary_counts_log() {
+        let c = db::open_in_memory().unwrap();
+        let f = fsrs();
+        let since = now_ts();
+        let src = import(&c, "A", 10.0, 100);
+        let ex = create_extract(&c, src, "", &doc("x"), 100).unwrap();
+        let it = item(&c, ex, "q [...]", 100);
+        topic_read(&c, src, 100).unwrap();
+        grade_item(&c, &f, it, 1, 101).unwrap();
+        grade_item(&c, &f, it, 3, 101).unwrap();
+        reschedule(&c, ex, 3, 101).unwrap();
+        let s = session_summary(&c, since).unwrap();
+        assert_eq!(
+            s,
+            SessionSummary { topics_read: 1, items_graded: 2, items_again: 1, extracts: 1, items_created: 1, postponed: 1, done: 0 }
+        );
+        assert_eq!(session_summary(&c, since + 10_000).unwrap(), SessionSummary::default());
+    }
+
+    #[test]
+    fn video_topics_and_clips() {
+        let c = db::open_in_memory().unwrap();
+        // No transcript: still in the queue, like a PDF.
+        let v = import_topic(
+            &c,
+            &ImportInput { title: "Talk".into(), doc_json: EMPTY_DOC.into(), priority: 20.0, video_id: Some("abcdefghijk".into()), ..Default::default() },
+            100,
+        )
+        .unwrap();
+        assert_eq!(queue(&c, 100).unwrap().entries.iter().filter(|q| q.id == v).count(), 1);
+        set_video_pos(&c, v, 61.5).unwrap();
+        assert_eq!(get_element(&c, v).unwrap().topic.unwrap().video_pos, Some(61.5));
+        assert!(create_clip(&c, v, "", 30.0, 10.0, EMPTY_DOC, 100).is_err());
+        let clip = create_clip(&c, v, "Key point", 30.0, 45.0, EMPTY_DOC, 100).unwrap();
+        let t = get_element(&c, clip).unwrap().topic.unwrap();
+        assert_eq!((t.video_id.as_deref(), t.video_start, t.video_end, t.video_pos), (Some("abcdefghijk"), Some(30.0), Some(45.0), Some(30.0)));
+        assert!(t.text_len > 0);
+        assert!(tree(&c).unwrap().iter().find(|n| n.id == clip).unwrap().video);
+        let plain = import(&c, "Plain", 50.0, 100);
+        assert!(create_clip(&c, plain, "", 0.0, 5.0, EMPTY_DOC, 100).is_err());
     }
 }

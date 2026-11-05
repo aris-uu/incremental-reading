@@ -1,3 +1,4 @@
+mod anki;
 mod assets;
 mod db;
 mod engine;
@@ -369,6 +370,38 @@ fn backup(state: State<AppState>) -> Result<String> {
 }
 
 #[tauri::command]
+fn create_clip(state: State<AppState>, parent_id: i64, title: String, start: f64, end: f64, doc_json: String) -> Result<i64> {
+    with(&state, |c| engine::create_clip(c, parent_id, &title, start, end, &doc_json, today()))
+}
+
+#[tauri::command]
+fn set_video_pos(state: State<AppState>, id: i64, pos: f64) -> Result<()> {
+    with(&state, |c| engine::set_video_pos(c, id, pos))
+}
+
+#[tauri::command]
+fn set_flag(state: State<AppState>, id: i64, flag: String, value: bool) -> Result<()> {
+    with(&state, |c| engine::set_flag(c, id, &flag, value))
+}
+
+#[tauri::command]
+fn session_summary(state: State<AppState>, since_ts: i64) -> Result<engine::SessionSummary> {
+    with(&state, |c| engine::session_summary(c, since_ts))
+}
+
+#[tauri::command]
+fn export_items(state: State<AppState>, roots: Option<Vec<i64>>) -> Result<Vec<engine::ExportItem>> {
+    with(&state, |c| engine::export_items(c, roots.as_deref()))
+}
+
+/// Write rendered cards as an Anki package in `exports`. Returns the path.
+#[tauri::command]
+async fn export_apkg(state: State<'_, AppState>, cards: Vec<anki::AnkiCard>) -> Result<String> {
+    let path = anki::export_apkg(&cards, &state.assets_dir, &state.data_dir.join("exports"))?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
 fn data_dir(state: State<AppState>) -> String {
     state.data_dir.to_string_lossy().into_owned()
 }
@@ -462,6 +495,12 @@ pub fn run() {
             extension_info,
             backup,
             data_dir,
+            set_flag,
+            create_clip,
+            set_video_pos,
+            session_summary,
+            export_items,
+            export_apkg,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the app");
