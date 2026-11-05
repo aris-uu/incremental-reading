@@ -1133,6 +1133,20 @@ pub fn topic_read(conn: &Connection, id: i64, day: i64) -> Result<i64> {
     Ok(next)
 }
 
+/// Set a topic's A-Factor (how fast its intervals grow), within 1.05–5.
+pub fn set_afactor(conn: &Connection, id: i64, afactor: f64) -> Result<()> {
+    if !afactor.is_finite() {
+        return Err("invalid A-Factor".into());
+    }
+    let n = conn
+        .execute("UPDATE topic SET afactor=?2 WHERE element_id=?1", params![id, (afactor.clamp(1.05, 5.0) * 100.0).round() / 100.0])
+        .map_err(e)?;
+    if n == 0 {
+        return Err("Only topics have an A-Factor".into());
+    }
+    touch(conn, id)
+}
+
 /// Set the next review explicitly, `days` from today (topics or items). Does
 /// not count as a repetition.
 pub fn reschedule(conn: &Connection, id: i64, days: i64, day: i64) -> Result<()> {
@@ -1796,6 +1810,8 @@ pub struct BrowseRow {
     pub reps: i64,
     pub lapses: i64,
     pub stability: Option<f64>,
+    /// Topics only.
+    pub afactor: Option<f64>,
     pub text_len: i64,
     pub children: i64,
     pub pinned: bool,
@@ -1818,7 +1834,7 @@ pub fn browse_rows(conn: &Connection) -> Result<Vec<BrowseRow>> {
                     COALESCE(i.reps, (SELECT COUNT(*) FROM review_log l WHERE l.element_id = e.id AND l.kind = 'read')),
                     COALESCE(i.lapses, 0), i.stability, COALESCE(t.text_len, 0),
                     (SELECT COUNT(*) FROM element c WHERE c.parent_id = e.id),
-                    e.pinned != 0, e.needs_work != 0, e.created_at, e.updated_at
+                    e.pinned != 0, e.needs_work != 0, e.created_at, e.updated_at, t.afactor
              FROM element e
              LEFT JOIN topic t ON t.element_id = e.id
              LEFT JOIN item  i ON i.element_id = e.id
@@ -1848,6 +1864,7 @@ pub fn browse_rows(conn: &Connection) -> Result<Vec<BrowseRow>> {
                 needs_work: r.get(17)?,
                 created_at: r.get(18)?,
                 updated_at: r.get(19)?,
+                afactor: r.get(20)?,
             })
         })
         .map_err(e)?
@@ -2544,6 +2561,10 @@ mod tests {
         assert_eq!((s.subtype.as_str(), s.reps, s.children), ("text", 1, 1));
         let i = rows.iter().find(|r| r.id == it).unwrap();
         assert_eq!((i.subtype.as_str(), i.parent_id), ("cloze", Some(src)));
+        set_afactor(&c, src, 9.0).unwrap();
+        assert_eq!(get_element(&c, src).unwrap().topic.unwrap().afactor, 5.0);
+        assert!(set_afactor(&c, it, 2.0).is_err());
+        assert_eq!(browse_rows(&c).unwrap().iter().find(|r| r.id == src).unwrap().afactor, Some(5.0));
         // Queue order: the child follows its parent.
         assert!(rows.iter().position(|r| r.id == src) < rows.iter().position(|r| r.id == it));
     }

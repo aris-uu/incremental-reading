@@ -123,6 +123,8 @@ export interface BrowseRow {
   reps: number;
   lapses: number;
   stability: number | null;
+  /** Topics only. */
+  afactor: number | null;
   text_len: number;
   children: number;
   pinned: boolean;
@@ -283,6 +285,7 @@ export const api = {
   extensionInfo: () => invoke<{ port: number; token: string }>("extension_info"),
   backup: () => invoke<string>("backup"),
   dataDir: () => invoke<string>("data_dir"),
+  setAfactor: (id: number, afactor: number) => invoke<void>("set_afactor", { id, afactor }),
   browseRows: () => invoke<BrowseRow[]>("browse_rows"),
   setFlag: (id: number, flag: "pinned" | "needs_work", value: boolean) => invoke<void>("set_flag", { id, flag, value }),
   sessionSummary: (sinceTs: number) => invoke<SessionSummary>("session_summary", { sinceTs }),
@@ -302,6 +305,10 @@ export const BANDS = [
   { max: 101, name: "someday", label: "Someday" },
 ] as const;
 export const bandOf = (priority: number) => BANDS.find((b) => priority < b.max) ?? BANDS[BANDS.length - 1];
+
+/** Same rule as the core: interval × A-Factor, at least one day longer (first read: 1 day). */
+export const nextTopicInterval = (interval: number, afactor: number) =>
+  interval <= 0 ? 1 : Math.max(interval + 1, Math.round(interval * afactor));
 
 /** Seconds → m:ss or h:mm:ss. */
 export function fmtTime(sec: number): string {

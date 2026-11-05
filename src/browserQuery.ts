@@ -10,7 +10,7 @@ import { LEECH_LAPSES, type BrowseRow } from "./api";
  *   under:12        element 12 and all its descendants (under:12,40 for several)
  *   child:12        direct children of 12
  *   id:3,4,5        these elements
- *   prio<20  due<=0  ivl>30  lapses>=4  reps=0  stab>10  rank<=100
+ *   prio<20  due<=0  ivl>30  lapses>=4  reps=0  stab>10  af>2  rank<=100
  *   added<7  edited<7  (days ago)   chars>5000
  *   words           full text (title and body)
  *   title:word      title only
@@ -65,6 +65,7 @@ const FIELDS: Record<string, (r: BrowseRow, c: Ctx) => number | null> = {
   lapses: (r) => r.lapses,
   reps: (r) => r.reps,
   stab: (r) => r.stability,
+  af: (r) => r.afactor,
   rank: (r) => r.prank,
   added: (r, c) => (c.now - r.created_at) / 86400,
   edited: (r, c) => (c.now - r.updated_at) / 86400,
@@ -175,7 +176,7 @@ export function parseQuery(q: string): Query {
   };
 }
 
-export type SortKey = "rank" | "title" | "kind" | "priority" | "due" | "interval" | "reps" | "lapses" | "created" | "updated" | "chars";
+export type SortKey = "rank" | "title" | "kind" | "priority" | "due" | "interval" | "reps" | "lapses" | "created" | "updated" | "chars" | "afactor";
 
 export const SORTS: Record<SortKey, (r: BrowseRow) => number | string> = {
   rank: (r) => r.prank,
@@ -189,6 +190,7 @@ export const SORTS: Record<SortKey, (r: BrowseRow) => number | string> = {
   created: (r) => r.created_at,
   updated: (r) => r.updated_at,
   chars: (r) => r.text_len,
+  afactor: (r) => r.afactor ?? -1,
 };
 
 /** Saved searches shown as one-click chips. */

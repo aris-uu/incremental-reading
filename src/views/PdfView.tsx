@@ -3,6 +3,7 @@ import * as pdfjs from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import "pdfjs-dist/web/pdf_viewer.css";
 import { isDefaultAction } from "../keys";
+import { AFactor } from "./AFactor";
 import { api, fmtDays, type PdfMark } from "../api";
 import { textDoc, toDisplaySrc } from "../editor/extensions";
 import { ElementHeader } from "./ElementHeader";
@@ -375,6 +376,7 @@ export function PdfView({ element, mode, onFinish, onOpen, onChanged, onDelete, 
         <span className="muted small">
           page {page}/{pdf?.numPages ?? "…"} · read point p. {topic.pdf_page ?? 1} · interval {fmtDays(topic.interval_days)}
         </span>
+          <AFactor id={element.id} afactor={topic.afactor} interval={topic.interval_days} notify={notify} onChanged={onChanged} />
       </div>
       <div className="pdf-scroller" ref={scroller} onScroll={onScroll}>
         {error && <p className="pad">Couldn't open the PDF: {error}</p>}

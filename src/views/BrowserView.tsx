@@ -27,6 +27,7 @@ const COLUMNS: { key: SortKey; label: string; title?: string; cls?: string }[] =
   { key: "priority", label: "Prio", cls: "num" },
   { key: "due", label: "Due", cls: "num" },
   { key: "interval", label: "Ivl", title: "Interval", cls: "num" },
+  { key: "afactor", label: "AF", title: "A-Factor (topics)", cls: "num" },
   { key: "reps", label: "Reps", title: "Repetitions (item grades or topic reads)", cls: "num" },
   { key: "lapses", label: "Lapses", cls: "num" },
   { key: "updated", label: "Edited", cls: "num" },
@@ -167,6 +168,13 @@ export function BrowserView({ initialQuery, today, version, notify, onOpen, onRe
     const n = v == null ? NaN : Number(v);
     if (!Number.isNaN(n)) void bulk("priority", Math.max(0, Math.min(100, n)));
   };
+  const askAfactor = () => {
+    const topics = sel.filter((id) => byId.get(id)?.kind === "topic");
+    const first = byId.get(topics[0]);
+    const v = window.prompt(`A-Factor for ${topics.length} topic(s), 1.05–5 (higher = read less often)`, (first?.afactor ?? 1.5).toFixed(2));
+    const n = v == null ? NaN : Number(v.replace(",", "."));
+    if (!Number.isNaN(n)) void run(`A-Factor ${n.toFixed(2)}: ${topics.length} topic(s)`, () => Promise.all(topics.map((id) => api.setAfactor(id, n))), false);
+  };
   const askDelete = () => {
     if (window.confirm(`Delete ${sel.length} element(s)? Children that aren't selected move to the top level. (You can undo right after.)`)) void bulk("delete");
   };
@@ -222,6 +230,7 @@ export function BrowserView({ initialQuery, today, version, notify, onOpen, onRe
       "separator",
       { label: `Set priority…${n}`, onClick: askPriority, hint: "P" },
       { label: `Review today${n}`, onClick: () => bulk("read_today"), disabled: !anyActive },
+      ...(sel.some((id) => byId.get(id)?.kind === "topic") ? [{ label: `Set A-Factor…${n}`, onClick: askAfactor, hint: "A" } as MenuEntry] : []),
       { label: `Move to…${n}`, onClick: () => void startMove(), hint: "M" },
       ...(anyItem ? [{ label: allWork ? `Clear “needs work”${n}` : `Flag “needs work”${n}`, onClick: () => setFlag("needs_work", !allWork) } as MenuEntry] : []),
       ...(anyActive ? ([{ label: `Dismiss${n}`, onClick: () => bulk("dismiss") }, { label: `Done!${n}`, onClick: () => bulk("done") }] as MenuEntry[]) : []),
@@ -252,6 +261,7 @@ export function BrowserView({ initialQuery, today, version, notify, onOpen, onRe
     else if (k === "Delete" && sel.length) askDelete();
     else if (k.toLowerCase() === "d" && sel.length) showDescendants(sel);
     else if (k.toLowerCase() === "p" && sel.length) askPriority();
+    else if (k.toLowerCase() === "a" && !ev.ctrlKey && !ev.metaKey && sel.length) askAfactor();
     else if (k.toLowerCase() === "m" && sel.length) void startMove();
     else if (k.toLowerCase() === "r") reviewSelection();
     else if (k === "a" && (ev.ctrlKey || ev.metaKey)) setSelected(new Set(shown.map((r) => r.id)));
@@ -359,6 +369,7 @@ export function BrowserView({ initialQuery, today, version, notify, onOpen, onRe
                     <td className="num">{r.status === "active" || r.status === "inbox" ? `${Math.round(r.priority)}%` : ""}</td>
                     <td className={`num ${overdue ? "warn-text" : ""}`}>{due}</td>
                     <td className="num">{r.interval_days != null && r.subtype !== "note" ? fmtDays(r.interval_days) : ""}</td>
+                    <td className="num">{r.afactor != null && r.subtype !== "note" ? r.afactor.toFixed(2) : ""}</td>
                     <td className="num">{r.reps || ""}</td>
                     <td className="num">{r.lapses || ""}</td>
                     <td className="num muted">{ago(r.updated_at, now)}</td>

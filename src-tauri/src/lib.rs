@@ -143,6 +143,11 @@ fn set_priority(state: State<AppState>, id: i64, priority: f64) -> Result<()> {
 }
 
 #[tauri::command]
+fn set_afactor(state: State<AppState>, id: i64, afactor: f64) -> Result<()> {
+    undoable(&state, "A-Factor", |_| Ok(vec![id]), |c| engine::set_afactor(c, id, afactor))
+}
+
+#[tauri::command]
 fn set_title(state: State<AppState>, id: i64, title: String) -> Result<()> {
     with(&state, |c| engine::set_title(c, id, &title))
 }
@@ -501,6 +506,7 @@ pub fn run() {
             backup,
             data_dir,
             set_flag,
+            set_afactor,
             browse_rows,
             create_clip,
             set_video_pos,

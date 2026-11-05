@@ -12,6 +12,7 @@ import { FormatBar } from "../editor/FormatBar";
 import { PdfView } from "./PdfView";
 import { VideoPanel, type VideoHandle } from "./VideoPanel";
 import { OcclusionDialog } from "./OcclusionDialog";
+import { AFactor } from "./AFactor";
 import { timeFromHref } from "../youtube";
 
 export type TopicOutcome = "next" | "later" | "done" | "dismiss" | "rescheduled" | "restored";
@@ -438,9 +439,9 @@ function TextTopicView({ element, mode, onFinish, onOpen, onChanged, onDelete, o
         <button onClick={occlude} title="Alt+O — click an image first; one item per covered region">Occlude</button>
         <span className="spacer" />
         <span className="muted small">
-          {progress && !isVideo && `${progress.pct}% · ~${progress.minutes} min left · `}interval {fmtDays(topic.interval_days)} · A-Factor{" "}
-          {topic.afactor.toFixed(2)}
+          {progress && !isVideo && `${progress.pct}% · ~${progress.minutes} min left · `}interval {fmtDays(topic.interval_days)}
         </span>
+        <AFactor id={id} afactor={topic.afactor} interval={topic.interval_days} notify={notify} onChanged={onChanged} />
       </div>
       {isVideo && <VideoPanel ref={video} element={element} notify={notify} onClip={makeClip} />}
       <FormatBar editor={editor} />
