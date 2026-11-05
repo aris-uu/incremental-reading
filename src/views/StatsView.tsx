@@ -19,7 +19,7 @@ function Bars({ series, labels, colors, height = 90 }: { series: number[][]; lab
   );
 }
 
-export function StatsView({ version }: { version: number }) {
+export function StatsView({ version, onOpen }: { version: number; onOpen?: (id: number) => void }) {
   const [s, setS] = useState<FullStats | null>(null);
   useEffect(() => {
     api.fullStats().then(setS);
@@ -98,15 +98,64 @@ export function StatsView({ version }: { version: number }) {
         <h3>Most productive sources</h3>
         <table className="table">
           <thead>
-            <tr><th>source</th><th>extracts</th><th>items</th></tr>
+            <tr><th>source</th><th>extracts</th><th>items</th><th title="Time spent reading and reviewing the branch (timed sessions only)">minutes</th><th title="Items per hour spent">items/h</th></tr>
           </thead>
           <tbody>
             {s.sources.map((r) => (
-              <tr key={r.id}><td>{r.title}</td><td className="mono">{r.extracts}</td><td className="mono">{r.items}</td></tr>
+              <tr key={r.id}>
+                <td><a onClick={() => onOpen?.(r.id)}>{r.title}</a></td>
+                <td className="mono">{r.extracts}</td>
+                <td className="mono">{r.items}</td>
+                <td className="mono">{r.minutes ? Math.round(r.minutes) : "—"}</td>
+                <td className="mono">{r.minutes >= 1 ? (r.items / (r.minutes / 60)).toFixed(1) : "—"}</td>
+              </tr>
             ))}
             {s.sources.length === 0 && <tr><td colSpan={3} className="muted">No extracts yet.</td></tr>}
           </tbody>
         </table>
+      </section>
+
+      <section>
+        <h3>Cost and calibration</h3>
+        <p className="small">
+          {s.seconds_per_review != null ? `${s.seconds_per_review.toFixed(1)} s per item review` : "No timed reviews yet"}
+          {s.seconds_per_read != null && ` · ${Math.round(s.seconds_per_read / 60 * 10) / 10} min per topic read`} (last 30 days)
+        </p>
+        <table className="table">
+          <thead>
+            <tr><th>priority band</th><th>target retention</th><th>actual (90 days)</th><th>mature reviews</th></tr>
+          </thead>
+          <tbody>
+            {s.retention_by_band.map((b) => {
+              const off = b.actual != null && b.reviews >= 20 && b.actual < b.target - 0.05;
+              return (
+                <tr key={b.label}>
+                  <td>{b.label}</td>
+                  <td className="mono">{(b.target * 100).toFixed(0)}%</td>
+                  <td className={`mono ${off ? "warn-text" : ""}`}>{b.actual == null ? "—" : `${(b.actual * 100).toFixed(1)}%`}</td>
+                  <td className="mono">{b.reviews}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        {s.costly.length > 0 && (
+          <>
+            <h4>Items that cost the most time</h4>
+            <p className="muted small">The honest leeches: total time spent on each. Reformulate or retire the worst.</p>
+            <table className="table">
+              <tbody>
+                {s.costly.map((c) => (
+                  <tr key={c.id}>
+                    <td><a onClick={() => onOpen?.(c.id)}>{c.title}</a></td>
+                    <td className="mono">{c.seconds >= 120 ? `${(c.seconds / 60).toFixed(1)} min` : `${Math.round(c.seconds)} s`}</td>
+                    <td className="mono">{c.lapses} lapses</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
+        )}
       </section>
 
       <section>

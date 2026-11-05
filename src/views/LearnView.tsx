@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { Notify } from "../notify";
-import { api, bandOf, type ElementFull, type FullStats, type QueueEntry, type SessionSummary, type Settings } from "../api";
+import { api, bandOf, type ElementFull, type FullStats, type QueueEntry, type SessionSummary, type Settings, type Started } from "../api";
 import { TopicView, type TopicOutcome } from "./TopicView";
 import { ItemView, type ItemOutcome } from "./ItemView";
 
@@ -161,6 +161,60 @@ function Summary({ since }: { since: number }) {
   );
 }
 
+/** Started topics, to finish deliberately instead of waiting for their next interval. */
+function ContinueReading({ onStart }: { onStart: (label: string, entries: QueueEntry[]) => void }) {
+  const [list, setList] = useState<Started[]>([]);
+  useEffect(() => {
+    api.continueReading().then(setList).catch(() => setList([]));
+  }, []);
+  if (!list.length) return null;
+  const entry = (s: Started): QueueEntry => ({ id: s.id, kind: "topic", title: s.title, priority: s.priority, due_day: s.due_day });
+  return (
+    <div className="dashboard">
+      <h3>
+        Continue reading{" "}
+        <button className="small-btn" onClick={() => onStart("Continue reading", list.map(entry))}>Read all</button>
+      </h3>
+      {list.map((s) => (
+        <div key={s.id} className="up-row" onClick={() => onStart(`Continue: ${s.title}`, [entry(s)])} title="Read it now">
+          <span className={`badge topic band-${bandOf(s.priority).name}`}>{s.kind === "pdf" ? "P" : s.kind === "video" ? "V" : "T"}</span>
+          <span className="tree-title">{s.title}</span>
+          {s.progress != null && (
+            <span className="mini-progress" title={`${Math.round(s.progress * 100)}% read`}>
+              <span style={{ width: `${Math.round(s.progress * 100)}%` }} />
+            </span>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Weekly-ish check: important topics nobody touched for weeks. Still important? */
+function PriorityAudit() {
+  const [list, setList] = useState<{ id: number; title: string; priority: number }[]>([]);
+  useEffect(() => {
+    api.priorityAudit().then(setList).catch(() => setList([]));
+  }, []);
+  if (!list.length) return null;
+  const drop = (id: number) => setList((l) => l.filter((x) => x.id !== id));
+  return (
+    <div className="dashboard">
+      <h3>Still important?</h3>
+      <p className="muted small">High-priority topics you haven't read in over 45 days. Keep them at the top of the queue only if they still deserve it.</p>
+      {list.map((a) => (
+        <div key={a.id} className="up-row">
+          <span className="tree-title" title={a.title}>{a.title}</span>
+          <span className="muted small mono">{Math.round(a.priority)}%</span>
+          <button className="small-btn" onClick={() => api.markAudited(a.id).then(() => drop(a.id))} title="Keep the priority; don't ask for 90 days">Keep</button>
+          <button className="small-btn" onClick={() => api.setPriority(a.id, Math.min(100, a.priority + 30)).then(() => api.markAudited(a.id)).then(() => drop(a.id))} title="Move it 30 points down the queue">Lower</button>
+          <button className="small-btn" onClick={() => api.dismiss(a.id).then(() => drop(a.id))} title="Stop reading it">Dismiss</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** Today at a glance, shown when the queue is empty: what's coming and what's slipping. */
 function Dashboard() {
   const [s, setS] = useState<FullStats | null>(null);
@@ -286,6 +340,8 @@ export function LearnView({ session, notify, onOpen, onChanged, onReviewBranch, 
         </p>
         <Summary since={session.startedAt} />
         <button onClick={() => load().then((m) => m && notify(m))}>{label ? "Back to today's queue" : "Reload queue"}</button>
+        {!label && <ContinueReading onStart={session.startSubset} />}
+        {!label && <PriorityAudit />}
         {!label && <Dashboard />}
       </div>
     );

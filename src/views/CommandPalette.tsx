@@ -11,12 +11,14 @@ interface Props {
   commands: Command[];
   onOpenElement: (id: number) => void;
   onClose: () => void;
+  /** Recently opened elements, newest first (shown before commands with no query). */
+  recent?: number[];
 }
 
 type Row = { kind: "command"; cmd: Command } | { kind: "element"; node: TreeNode; path: string };
 
 /** Ctrl+K: run any command, or jump to an element by title or text. */
-export function CommandPalette({ commands, onOpenElement, onClose }: Props) {
+export function CommandPalette({ commands, onOpenElement, onClose, recent = [] }: Props) {
   const [q, setQ] = useState("");
   const [nodes, setNodes] = useState<TreeNode[]>([]);
   const [textHits, setTextHits] = useState<number[]>([]);
@@ -47,7 +49,14 @@ export function CommandPalette({ commands, onOpenElement, onClose }: Props) {
     const words = needle.split(/\s+/).filter(Boolean);
     const matches = (s: string) => words.every((w) => s.toLowerCase().includes(w));
     const cmds = commands.filter((c) => !needle || matches(c.label)).map((cmd) => ({ kind: "command", cmd }) as Row);
-    if (!needle) return cmds;
+    if (!needle) {
+      const rec = recent
+        .map((id) => byId.get(id))
+        .filter(Boolean)
+        .slice(0, 8)
+        .map((n) => ({ kind: "element", node: n!, path: `recent · ${pathOf(n!)}` }) as Row);
+      return [...rec, ...cmds];
+    }
     const seen = new Set<number>();
     const els: Row[] = [];
     for (const n of nodes) {
@@ -63,7 +72,7 @@ export function CommandPalette({ commands, onOpenElement, onClose }: Props) {
     }
     return [...cmds, ...els];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [commands, nodes, q, textHits, byId]);
+  }, [commands, nodes, q, recent, textHits, byId]);
 
   useEffect(() => setCursor(0), [q]);
 

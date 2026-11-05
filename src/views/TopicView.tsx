@@ -197,8 +197,17 @@ function TextTopicView({ element, mode, onFinish, onOpen, onChanged, onDelete, o
     [save, updateProgress],
   );
 
-  const extract = useCallback(async () => {
+  /** Extracts made from this topic (for the selectivity counter). */
+  const made = useRef(element.children);
+  const extract = useCallback(async (withPriority = false) => {
     if (!editor) return;
+    let priority: number | null = null;
+    if (withPriority) {
+      const v = window.prompt("Priority for this extract (0 = most important; the parent is " + Math.round(element.priority) + "%)", String(Math.max(0, Math.round(element.priority) - 5)));
+      if (v == null) return;
+      const n = Number(v);
+      if (!Number.isNaN(n)) priority = Math.max(0, Math.min(100, n));
+    }
     const { from, to, empty } = editor.state.selection;
     if (empty) return notify("Select text to extract");
     const slice = editor.state.doc.slice(from, to);
@@ -213,11 +222,31 @@ function TextTopicView({ element, mode, onFinish, onOpen, onChanged, onDelete, o
       doc = { type: "doc", content: text.split("\n").filter(Boolean).map((t) => textDoc(t).content[0]) };
     }
     const childId = await api.createExtract(id, "", JSON.stringify(doc));
+    if (priority != null) await api.setPriority(childId, priority);
     editor.chain().setTextSelection({ from, to }).setMark("extract", { id: childId }).setTextSelection(to).run();
     setReadPoint(editor, to);
-    notify("Extract created");
+    made.current += 1;
+    // Over-extracting is the usual way a backlog starts: keep the count in view.
+    notify(`Extract created${priority != null ? ` at ${priority}%` : ""} · ${made.current} from this topic${made.current >= 15 ? " — be selective" : ""}`);
     onChanged?.();
-  }, [editor, id, notify, onChanged, setReadPoint]);
+  }, [editor, element.priority, id, notify, onChanged, setReadPoint]);
+
+  /** Headings, for the table of contents. */
+  const [tocOpen, setTocOpen] = useState(false);
+  const headings = () => {
+    const out: { pos: number; level: number; text: string }[] = [];
+    editor?.state.doc.descendants((n, pos) => {
+      if (n.type.name === "heading") out.push({ pos, level: n.attrs.level ?? 1, text: n.textContent });
+      return n.isBlock && n.type.name !== "heading";
+    });
+    return out;
+  };
+  const jumpTo = (pos: number) => {
+    if (!editor) return;
+    setTocOpen(false);
+    const dom = editor.view.nodeDOM(pos) as HTMLElement | null;
+    dom?.scrollIntoView({ block: "start", behavior: "smooth" });
+  };
 
   const cloze = useCallback(async () => {
     if (!editor) return;
@@ -401,7 +430,8 @@ function TextTopicView({ element, mode, onFinish, onOpen, onChanged, onDelete, o
     const onKey = (ev: KeyboardEvent) => {
       const k = ev.key.toLowerCase();
       const run = (f: () => unknown) => (ev.preventDefault(), void f());
-      if (ev.altKey && k === "x") return run(extract);
+      if (ev.altKey && ev.shiftKey && k === "x") return run(() => extract(true));
+      if (ev.altKey && k === "x") return run(() => extract());
       if (ev.altKey && k === "z") return run(cloze);
       if (ev.altKey && k === "a") return run(addQa);
       if (ev.altKey && k === "i") return run(ignore);
@@ -431,7 +461,7 @@ function TextTopicView({ element, mode, onFinish, onOpen, onChanged, onDelete, o
         onRestore={() => finish("restored")}
       />
       <div className="toolbar">
-        <button onClick={extract} title="Alt+X">Extract</button>
+        <button onClick={() => void extract()} title="Alt+X · Shift+Alt+X to choose its priority">Extract</button>
         <button onClick={cloze} title="Alt+Z">Cloze</button>
         <button onClick={addQa} title="Alt+A — selection becomes the answer">Q&amp;A</button>
         <button onClick={ignore} title="Alt+I">Ignore</button>
@@ -439,6 +469,19 @@ function TextTopicView({ element, mode, onFinish, onOpen, onChanged, onDelete, o
         <button onClick={deleteBefore} title="Alt+\ — delete everything before the cursor">Delete before</button>
         <button onClick={splitByHeadings} title="One child topic per section (SuperMemo's Dismember)">Split</button>
         <button onClick={occlude} title="Alt+O — click an image first; one item per covered region">Occlude</button>
+        <span className="toc-wrap">
+          <button onClick={() => setTocOpen((o) => !o)} title="Table of contents">Contents ▾</button>
+          {tocOpen && (
+            <div className="toc-menu" onMouseLeave={() => setTocOpen(false)}>
+              {headings().length === 0 && <div className="muted small pad">No headings</div>}
+              {headings().map((h) => (
+                <a key={h.pos} style={{ paddingLeft: 8 + (h.level - 1) * 12 }} onClick={() => jumpTo(h.pos)}>
+                  {h.text || "(untitled)"}
+                </a>
+              ))}
+            </div>
+          )}
+        </span>
         <span className="spacer" />
         <span className="muted small">
           {progress && !isVideo && `${progress.pct}% · ~${progress.minutes} min left · `}interval {fmtDays(topic.interval_days)}
@@ -476,7 +519,7 @@ function TextTopicView({ element, mode, onFinish, onOpen, onChanged, onDelete, o
         )}
         {selBox && (
           <div className="sel-toolbar" style={{ top: selBox.top, left: selBox.left }} onMouseDown={(e) => e.preventDefault()}>
-            <button onClick={extract}>Extract <kbd>Alt+X</kbd></button>
+            <button onClick={() => void extract()}>Extract <kbd>Alt+X</kbd></button>
             <button onClick={cloze}>Cloze <kbd>Alt+Z</kbd></button>
             <button onClick={addQa}>Q&amp;A <kbd>Alt+A</kbd></button>
             <button onClick={ignore}>Ignore</button>

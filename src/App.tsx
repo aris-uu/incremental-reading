@@ -17,8 +17,7 @@ import { exportToAnki } from "./ankiExport";
 import { OcclusionDialog } from "./views/OcclusionDialog";
 import { BrowserView } from "./views/BrowserView";
 
-const isTyping = (t: EventTarget | null) =>
-  t instanceof HTMLElement && (t.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName));
+import { isTyping } from "./keys";
 
 /** What the reader pane shows. */
 type View = { kind: "learn" } | { kind: "inbox" } | { kind: "stats" } | { kind: "browse"; id: number } | { kind: "browser"; query: string };
@@ -189,7 +188,46 @@ export default function App() {
     const s = sessionRef.current;
     if (s.queue == null || s.pos >= s.queue.length) void s.load().then((m) => m && notify(m));
   }, [notify]);
-  const open = useCallback((id: number) => setView({ kind: "browse", id }), []);
+  /** Back/forward through opened elements, like a web browser (Alt+← / Alt+→). */
+  const history = useRef<{ list: number[]; at: number }>({ list: [], at: -1 });
+  const [recent, setRecent] = useState<number[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("ir.recent") ?? "[]");
+    } catch {
+      return [];
+    }
+  });
+  const remember = useCallback((id: number) => {
+    setRecent((r) => {
+      const next = [id, ...r.filter((x) => x !== id)].slice(0, 20);
+      try {
+        localStorage.setItem("ir.recent", JSON.stringify(next));
+      } catch {
+        /* not remembered */
+      }
+      return next;
+    });
+  }, []);
+  const open = useCallback(
+    (id: number) => {
+      const h = history.current;
+      if (h.list[h.at] !== id) {
+        h.list = [...h.list.slice(0, h.at + 1), id].slice(-100);
+        h.at = h.list.length - 1;
+      }
+      remember(id);
+      setView({ kind: "browse", id });
+    },
+    [remember],
+  );
+  const go = useCallback((delta: number) => {
+    const h = history.current;
+    const at = h.at + delta;
+    if (at < 0 || at >= h.list.length) return;
+    h.at = at;
+    setView({ kind: "browse", id: h.list[at] });
+  }, []);
+  const [undoOpen, setUndoOpen] = useState<string[] | null>(null);
   /** The element browser with a search (e.g. `under:12`, `is:due`). */
   const browser = useCallback((query = "is:active") => setView({ kind: "browser", query }), []);
 
@@ -246,13 +284,15 @@ export default function App() {
       else if (ev.ctrlKey && !ev.shiftKey && k === "k") ev.preventDefault(), setPaletteOpen(true);
       else if (ev.ctrlKey && ev.shiftKey && k === "f") ev.preventDefault(), toggleFocus();
       else if (ev.ctrlKey && ev.shiftKey && k === "b") ev.preventDefault(), browser();
+      else if (ev.altKey && !ev.ctrlKey && ev.key === "ArrowLeft" && !isTyping(ev.target)) ev.preventDefault(), go(-1);
+      else if (ev.altKey && !ev.ctrlKey && ev.key === "ArrowRight" && !isTyping(ev.target)) ev.preventDefault(), go(1);
       else if (ev.key === "Escape" && focus && !document.querySelector(".modal-backdrop")) toggleFocus();
       // Ctrl+Z outside a text field undoes the last tree/schedule action; inside, the editor's own undo applies.
       else if (ev.ctrlKey && !ev.shiftKey && k === "z" && !isTyping(ev.target)) ev.preventDefault(), void doUndo();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [browser, doImport, doUndo, focus, learn, newItem, toggleFocus, toggleSidebar]);
+  }, [browser, doImport, doUndo, focus, go, learn, newItem, toggleFocus, toggleSidebar]);
 
   const currentIdForPalette = () => (view.kind === "browse" ? view.id : view.kind === "learn" ? session.queue?.[session.pos]?.id ?? null : null);
   const commands: Command[] = [
@@ -281,6 +321,10 @@ export default function App() {
     { label: "New image occlusion from a file…", run: () => imagePick.current?.click() },
     { label: "Export all items to Anki (.apkg)", run: () => void exportAll() },
     { label: "Undo last action", hint: "Ctrl+Z", run: () => void doUndo() },
+    { label: "Undo history…", run: () => void api.undoList().then(setUndoOpen) },
+    { label: "Back", hint: "Alt+←", run: () => go(-1) },
+    { label: "Forward", hint: "Alt+→", run: () => go(1) },
+    { label: "Browser: made today (end-of-day review)", run: () => browser("added<1") },
     { label: "Reload today's queue", run: () => void session.load().then((m) => m && notify(m)) },
     { label: "Back up the collection", run: () => void api.backup().then((p) => notify(`Backup written: ${p}`)) },
   ];
@@ -347,7 +391,7 @@ export default function App() {
               onOverload={() => setToolsOpen(true)}
             />
           )}
-          {view.kind === "stats" && <StatsView version={version} />}
+          {view.kind === "stats" && <StatsView version={version} onOpen={open} />}
           {view.kind === "browser" && stats && (
             <BrowserView
               initialQuery={view.query}
@@ -398,7 +442,29 @@ export default function App() {
         />
       )}
       {toolsOpen && <ToolsDialog branch={branch} onClose={() => setToolsOpen(false)} onChanged={changed} notify={notify} />}
-      {paletteOpen && <CommandPalette commands={commands} onOpenElement={open} onClose={() => setPaletteOpen(false)} />}
+      {paletteOpen && <CommandPalette commands={commands} recent={recent} onOpenElement={open} onClose={() => setPaletteOpen(false)} />}
+      {undoOpen && (
+        <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && setUndoOpen(null)}>
+          <div className="modal picker">
+            <strong>Undo history</strong>
+            <p className="muted small">Most recent first. Undoing an entry also undoes everything above it.</p>
+            {undoOpen.length === 0 && <p className="muted small">Nothing to undo.</p>}
+            {undoOpen.map((label, i) => (
+              <button
+                key={i}
+                className="undo-row"
+                onClick={async () => {
+                  setUndoOpen(null);
+                  for (let k = 0; k <= i; k++) await doUndo();
+                }}
+              >
+                {i + 1}. {label}
+              </button>
+            ))}
+            <button onClick={() => setUndoOpen(null)}>Close</button>
+          </div>
+        </div>
+      )}
       {toast && (
         <div className="toast">
           <span>{toast.message}</span>

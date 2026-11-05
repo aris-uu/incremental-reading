@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Notify } from "../notify";
-import { api, type PostponeReport, type PostponeSpec, type Settings } from "../api";
+import { api, type Cram, type PostponeReport, type PostponeSpec, type Settings } from "../api";
 import { exportToAnki } from "../ankiExport";
 import { DEFAULT_APPEARANCE, FONTS, THEMES, loadAppearance, saveAppearance, type Appearance } from "../appearance";
 
@@ -37,7 +37,12 @@ export function ToolsDialog({ branch, onClose, onChanged, notify }: Props) {
         </div>
         <div className="modal-body">
           {tab === "overload" && <Overload branch={branch} onChanged={onChanged} notify={notify} />}
-          {tab === "settings" && <SettingsTab notify={notify} />}
+          {tab === "settings" && (
+            <>
+              <SettingsTab notify={notify} />
+              <CramTab branch={branch} notify={notify} />
+            </>
+          )}
           {tab === "appearance" && <AppearanceTab />}
           {tab === "extension" && <ExtensionTab />}
           {tab === "backup" && <BackupTab notify={notify} />}
@@ -130,6 +135,60 @@ function Overload({ branch, onChanged, notify }: Omit<Props, "onClose">) {
       <div className="row-actions">
         <span className="muted small">{mercy ? `${mercy.reduce((a, b) => a + b, 0)} elements due` : "…"}</span>
         <button className="primary" disabled={!mercy || mercy.slice(1).every((n) => n === 0)} onClick={runMercy}>Apply mercy</button>
+      </div>
+    </div>
+  );
+}
+
+/** Exam mode: a higher target retention for one branch until a date. */
+function CramTab({ branch, notify }: { branch: Props["branch"]; notify: Notify }) {
+  const [list, setList] = useState<Cram[]>([]);
+  const [today, setToday] = useState<number | null>(null);
+  const [date, setDate] = useState(() => new Date(Date.now() + 14 * 86400_000).toISOString().slice(0, 10));
+  const [ret, setRet] = useState(0.97);
+  useEffect(() => {
+    api.getCram().then(setList);
+    api.getStats().then((s) => setToday(s.today));
+  }, []);
+  const save = (next: Cram[]) => api.setCram(next).then(() => (setList(next), notify("Exam mode saved")));
+  const dayOf = (iso: string) => {
+    if (today == null) return null;
+    const diff = Math.round((new Date(`${iso}T12:00:00`).getTime() - Date.now()) / 86400_000);
+    return today + Math.max(0, diff);
+  };
+  const dateOf = (day: number) => (today == null ? "" : new Date(Date.now() + (day - today) * 86400_000).toLocaleDateString());
+  return (
+    <div className="tools">
+      <h3>Exam mode</h3>
+      <p className="muted small">
+        Until the exam, items in the branch are scheduled for a higher retention (shorter intervals). Afterwards they return to normal.
+        The branch is the element open in the reader.
+      </p>
+      {list.map((c, i) => (
+        <div key={i} className="row small">
+          <span>“{c.title}”: {(c.retention * 100).toFixed(0)}% until {dateOf(c.until)}</span>
+          <button className="small-btn" onClick={() => void save(list.filter((_, j) => j !== i))}>Remove</button>
+        </div>
+      ))}
+      <div className="form-grid">
+        <label>
+          exam date <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+        </label>
+        <label>
+          retention
+          <input type="range" min={0.9} max={0.99} step={0.01} value={ret} onChange={(e) => setRet(Number(e.target.value))} />
+          <span className="mono">{(ret * 100).toFixed(0)}%</span>
+        </label>
+      </div>
+      <div className="row-actions">
+        <span className="spacer" />
+        <button
+          className="primary"
+          disabled={!branch || today == null}
+          onClick={() => branch && void save([...list, { root: branch.id, title: branch.title, retention: ret, until: dayOf(date)! }])}
+        >
+          {branch ? `Exam mode for “${branch.title}”` : "Open an element first"}
+        </button>
       </div>
     </div>
   );

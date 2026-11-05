@@ -55,6 +55,8 @@ export function Sidebar({ today, version, openId, onOpen, onBrowse, onReview, on
   const [cursor, setCursor] = useState<number | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; target: number | null } | null>(null);
   const [moving, setMoving] = useState<number[] | null>(null);
+  /** Hoisted branch: the tree shows only this subtree. */
+  const [hoist, setHoist] = useState<number | null>(null);
   const [dropTarget, setDropTarget] = useState<DropTarget | "root" | null>(null);
   const [sortMode, setSortMode] = useState<"manual" | "priority">(() => {
     try {
@@ -173,10 +175,10 @@ export function Sidebar({ today, version, openId, onOpen, onBrowse, onReview, on
       memo.set(n.id, self || kids);
       return self || kids;
     };
-    (children.get(null) ?? []).forEach(visit);
+    (hoist != null && byId.has(hoist) ? [byId.get(hoist)!] : children.get(null) ?? []).forEach(visit);
     return memo;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [children, matches, showInactive, filter, today]);
+  }, [children, matches, showInactive, filter, today, hoist, byId]);
 
   const isOpen = useCallback((id: number) => !!matches || filter !== "all" || !collapsed.has(id), [collapsed, filter, matches]);
 
@@ -190,9 +192,9 @@ export function Sidebar({ today, version, openId, onOpen, onBrowse, onReview, on
         if (isOpen(n.id)) walk(children.get(n.id) ?? [], depth + 1);
       }
     };
-    walk(children.get(null) ?? [], 0);
+    walk(hoist != null && byId.has(hoist) ? [byId.get(hoist)!] : children.get(null) ?? [], 0);
     return out;
-  }, [children, isOpen, visible]);
+  }, [byId, children, hoist, isOpen, visible]);
   const indexOf = useMemo(() => new Map(flat.map((r, i) => [r.node.id, i])), [flat]);
 
   const selectRange = (from: number, to: number) => {
@@ -364,6 +366,7 @@ export function Sidebar({ today, version, openId, onOpen, onBrowse, onReview, on
     const n = ids.length > 1 ? ` (${ids.length})` : "";
     return [
       ...(one ? [{ label: "Open", onClick: () => onOpen(one.id), hint: "Enter" } as MenuEntry] : []),
+      ...(one ? [{ label: hoist === one.id ? "Unfocus the tree" : "Focus the tree on this branch", onClick: () => setHoist(hoist === one.id ? null : one.id) } as MenuEntry] : []),
       { label: `Show descendants in the browser${n}`, onClick: () => onBrowse(`under:${roots(ids).join(",")}`) },
       { label: `Review branch${n}`, onClick: () => review(ids, false) },
       { label: `Review branch, due only${n}`, onClick: () => review(ids, true) },
@@ -644,6 +647,14 @@ export function Sidebar({ today, version, openId, onOpen, onBrowse, onReview, on
         </button>
         <button className="small-btn" title="New top-level topic" onClick={() => newTopic(null)}>+</button>
       </div>
+      {hoist != null && byId.has(hoist) && (
+        <div className="search-bar small">
+          <span className="muted">Focused on “{byId.get(hoist)!.title}”</span>
+          <span className="spacer" />
+          {parentOf.get(hoist) != null && <button className="small-btn" onClick={() => setHoist(parentOf.get(hoist) ?? null)}>Up</button>}
+          <button className="small-btn" onClick={() => setHoist(null)}>Unfocus</button>
+        </div>
+      )}
       {filter !== "all" && (
         <div className="search-bar small">
           <span className="muted">Filter: {FILTERS[filter]}</span>

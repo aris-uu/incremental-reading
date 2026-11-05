@@ -10,7 +10,8 @@ import { LEECH_LAPSES, type BrowseRow } from "./api";
  *   under:12        element 12 and all its descendants (under:12,40 for several)
  *   child:12        direct children of 12
  *   id:3,4,5        these elements
- *   prio<20  due<=0  ivl>30  lapses>=4  reps=0  stab>10  af>2  rank<=100
+ *   prio<20  due<=0  ivl>30  lapses>=4  reps=0  stab>10  af>2  r<0.8  rank<=100
+ *   tag:name  is:tagged  is:duplicate
  *   added<7  edited<7  (days ago)   chars>5000
  *   words           full text (title and body)
  *   title:word      title only
@@ -30,6 +31,8 @@ export interface Ctx {
   children: Map<number | null, number[]>;
   /** Full-text hits, when the query had words. */
   textHits: Set<number> | null;
+  /** Items whose question looks like another item's (for is:duplicate). */
+  duplicates?: Set<number>;
 }
 
 type Pred = (r: BrowseRow, c: Ctx) => boolean;
@@ -56,6 +59,8 @@ const IS: Record<string, Pred> = {
   pinned: (r) => r.pinned,
   parent: (r) => r.children > 0,
   root: (r) => r.parent_id == null,
+  duplicate: (r, c) => !!c.duplicates?.has(r.id),
+  tagged: (r) => r.tags.length > 0,
 };
 
 const FIELDS: Record<string, (r: BrowseRow, c: Ctx) => number | null> = {
@@ -66,6 +71,7 @@ const FIELDS: Record<string, (r: BrowseRow, c: Ctx) => number | null> = {
   reps: (r) => r.reps,
   stab: (r) => r.stability,
   af: (r) => r.afactor,
+  r: (r) => r.retrievability,
   rank: (r) => r.prank,
   added: (r, c) => (c.now - r.created_at) / 86400,
   edited: (r, c) => (c.now - r.updated_at) / 86400,
@@ -136,6 +142,9 @@ export function parseQuery(q: string): Query {
     } else if ((m = lower.match(/^id:([\d,]+)$/))) {
       const set = new Set(ids(m[1]));
       p = (r) => set.has(r.id);
+    } else if ((m = lower.match(/^tag:(.+)$/))) {
+      const name = m[1].replace(/^#/, "");
+      p = (r) => r.tags.some((t) => t.toLowerCase() === name || t.toLowerCase().startsWith(`${name}::`));
     } else if ((m = lower.match(/^title:(.+)$/))) {
       const needle = m[1].replace(/^"|"$/g, "");
       p = (r) => r.title.toLowerCase().includes(needle);
@@ -176,7 +185,9 @@ export function parseQuery(q: string): Query {
   };
 }
 
-export type SortKey = "rank" | "title" | "kind" | "priority" | "due" | "interval" | "reps" | "lapses" | "created" | "updated" | "chars" | "afactor";
+export type SortKey =
+  | "rank" | "title" | "kind" | "priority" | "due" | "interval" | "reps" | "lapses" | "created" | "updated" | "chars" | "afactor"
+  | "stability" | "retrievability" | "tags";
 
 export const SORTS: Record<SortKey, (r: BrowseRow) => number | string> = {
   rank: (r) => r.prank,
@@ -191,7 +202,25 @@ export const SORTS: Record<SortKey, (r: BrowseRow) => number | string> = {
   updated: (r) => r.updated_at,
   chars: (r) => r.text_len,
   afactor: (r) => r.afactor ?? -1,
+  stability: (r) => r.stability ?? -1,
+  retrievability: (r) => r.retrievability ?? 2,
+  tags: (r) => r.tags.join(" ").toLowerCase(),
 };
+
+/** Normalised text for duplicate detection. */
+const norm = (s: string) => s.toLowerCase().replace(/\[\.\.\.\]/g, " ").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+
+/** Items with the same normalised question (title) as another item. */
+export function findDuplicates(rows: BrowseRow[]): Set<number> {
+  const seen = new Map<string, number[]>();
+  for (const r of rows) {
+    if (r.kind !== "item" || r.status === "dismissed") continue;
+    const k = norm(r.title);
+    if (k.length < 8) continue;
+    seen.set(k, [...(seen.get(k) ?? []), r.id]);
+  }
+  return new Set([...seen.values()].filter((ids) => ids.length > 1).flat());
+}
 
 /** Saved searches shown as one-click chips. */
 export const PRESETS: { label: string; query: string; sort?: SortKey; desc?: boolean }[] = [
@@ -203,7 +232,10 @@ export const PRESETS: { label: string; query: string; sort?: SortKey; desc?: boo
   { label: "New items", query: "is:item is:new is:active", sort: "rank" },
   { label: "Unread topics", query: "is:topic is:new is:active -is:note", sort: "rank" },
   { label: "Videos & PDFs", query: "is:video or is:pdf" },
+  { label: "About to be forgotten", query: "is:item is:active r<0.85", sort: "retrievability" },
+  { label: "Made today", query: "added<1", sort: "created", desc: true },
   { label: "Added this week", query: "added<7", sort: "created", desc: true },
+  { label: "Duplicates", query: "is:duplicate", sort: "title" },
   { label: "Inbox", query: "is:inbox", sort: "created", desc: true },
   { label: "Done & dismissed", query: "is:done or is:dismissed", sort: "updated", desc: true },
 ];

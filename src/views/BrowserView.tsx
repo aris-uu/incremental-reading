@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, bandOf, fmtDays, LEECH_LAPSES, type BrowseRow, type BulkAction, type QueueEntry, type TreeNode } from "../api";
-import { parseQuery, PRESETS, SORTS, type Ctx, type SortKey } from "../browserQuery";
+import { findDuplicates, parseQuery, PRESETS, SORTS, type Ctx, type SortKey } from "../browserQuery";
 import { exportToAnki } from "../ankiExport";
 import { isTyping } from "../keys";
 import type { Notify } from "../notify";
@@ -20,18 +20,34 @@ interface Props {
   onReviewBranch: (id: number) => void;
 }
 
-const COLUMNS: { key: SortKey; label: string; title?: string; cls?: string }[] = [
-  { key: "rank", label: "#", title: "Position in the priority queue", cls: "num" },
-  { key: "kind", label: "", title: "Type" },
-  { key: "title", label: "Title" },
-  { key: "priority", label: "Prio", cls: "num" },
-  { key: "due", label: "Due", cls: "num" },
-  { key: "interval", label: "Ivl", title: "Interval", cls: "num" },
-  { key: "afactor", label: "AF", title: "A-Factor (topics)", cls: "num" },
-  { key: "reps", label: "Reps", title: "Repetitions (item grades or topic reads)", cls: "num" },
-  { key: "lapses", label: "Lapses", cls: "num" },
-  { key: "updated", label: "Edited", cls: "num" },
+interface Column {
+  key: SortKey;
+  label: string;
+  title?: string;
+  cls?: string;
+  width: number;
+  /** Shown unless the user hides it. */
+  base?: boolean;
+}
+
+const COLUMNS: Column[] = [
+  { key: "rank", label: "#", title: "Position in the priority queue", cls: "num", width: 44, base: true },
+  { key: "kind", label: "", title: "Type", width: 30, base: true },
+  { key: "title", label: "Title", width: 0, base: true },
+  { key: "priority", label: "Prio", cls: "num", width: 54, base: true },
+  { key: "due", label: "Due", cls: "num", width: 54, base: true },
+  { key: "interval", label: "Ivl", title: "Interval", cls: "num", width: 54, base: true },
+  { key: "afactor", label: "AF", title: "A-Factor (topics)", cls: "num", width: 46, base: true },
+  { key: "reps", label: "Reps", title: "Repetitions (item grades or topic reads)", cls: "num", width: 46, base: true },
+  { key: "lapses", label: "Lapses", cls: "num", width: 50, base: true },
+  { key: "retrievability", label: "R", title: "Predicted recall today (items)", cls: "num", width: 48 },
+  { key: "stability", label: "Stab", title: "Stability in days (items)", cls: "num", width: 54 },
+  { key: "tags", label: "Tags", width: 110 },
+  { key: "chars", label: "Size", title: "Text length", cls: "num", width: 58 },
+  { key: "created", label: "Added", cls: "num", width: 58 },
+  { key: "updated", label: "Edited", cls: "num", width: 58, base: true },
 ];
+const COLS_KEY = "ir.browserColumns";
 
 const PAGE = 400;
 const ago = (ts: number, now: number) => fmtDays(Math.round((now - ts) / 86400));
@@ -57,6 +73,44 @@ export function BrowserView({ initialQuery, today, version, notify, onOpen, onRe
   const [previewOpen, setPreviewOpen] = useState(true);
   const input = useRef<HTMLInputElement>(null);
   const table = useRef<HTMLDivElement>(null);
+  const [cols, setCols] = useState<SortKey[]>(() => {
+    try {
+      const v = JSON.parse(localStorage.getItem(COLS_KEY) ?? "null");
+      if (Array.isArray(v)) return v;
+    } catch {
+      /* default */
+    }
+    return COLUMNS.filter((c) => c.base).map((c) => c.key);
+  });
+  const toggleCol = (k: SortKey) =>
+    setCols((cs) => {
+      const next = cs.includes(k) ? cs.filter((x) => x !== k) : COLUMNS.map((c) => c.key).filter((x) => x === k || cs.includes(x));
+      try {
+        localStorage.setItem(COLS_KEY, JSON.stringify(next));
+      } catch {
+        /* not remembered */
+      }
+      return next;
+    });
+  const columns = COLUMNS.filter((c) => c.key === "title" || cols.includes(c.key));
+  const [colMenu, setColMenu] = useState<{ x: number; y: number } | null>(null);
+  /** Saved searches (in the collection, so they travel with it). */
+  const [saved, setSaved] = useState<{ label: string; query: string }[]>([]);
+  useEffect(() => {
+    api.getUiState("saved_searches").then((v) => v && setSaved(JSON.parse(v))).catch(() => {});
+  }, []);
+  const storeSaved = (next: { label: string; query: string }[]) => {
+    setSaved(next);
+    void api.setUiState("saved_searches", JSON.stringify(next));
+  };
+  const saveSearch = () => {
+    const q = query.trim();
+    if (!q) return notify("Type a search first");
+    const label = window.prompt("Name this search", q);
+    if (label) storeSaved([...saved.filter((x) => x.label !== label), { label, query: q }]);
+  };
+  /** Row whose priority is being typed in place. */
+  const [editing, setEditing] = useState<number | null>(null);
 
   useEffect(() => {
     setQuery(initialQuery);
@@ -93,9 +147,10 @@ export function BrowserView({ initialQuery, today, version, notify, onOpen, onRe
     return m;
   }, [rows]);
   const byId = useMemo(() => new Map(rows.map((r) => [r.id, r])), [rows]);
+  const duplicates = useMemo(() => (/is:duplicate/i.test(applied) ? findDuplicates(rows) : undefined), [applied, rows]);
 
   const shown = useMemo(() => {
-    const ctx: Ctx = { today, now: Date.now() / 1000, children, textHits: parsed.text ? textHits ?? new Set() : null };
+    const ctx: Ctx = { today, now: Date.now() / 1000, children, textHits: parsed.text ? textHits ?? new Set() : null, duplicates };
     const out = rows.filter((r) => parsed.test(r, ctx));
     const f = SORTS[sort.key];
     out.sort((a, b) => {
@@ -105,7 +160,7 @@ export function BrowserView({ initialQuery, today, version, notify, onOpen, onRe
       return sort.desc ? -c : c;
     });
     return out;
-  }, [children, parsed, rows, sort, textHits, today]);
+  }, [children, duplicates, parsed, rows, sort, textHits, today]);
 
   useEffect(() => setLimit(PAGE), [applied, sort]);
   // Drop selections that left the result.
@@ -175,6 +230,11 @@ export function BrowserView({ initialQuery, today, version, notify, onOpen, onRe
     const n = v == null ? NaN : Number(v.replace(",", "."));
     if (!Number.isNaN(n)) void run(`A-Factor ${n.toFixed(2)}: ${topics.length} topic(s)`, () => Promise.all(topics.map((id) => api.setAfactor(id, n))), false);
   };
+  const askTag = (add: boolean) => {
+    const v = window.prompt(add ? `Tag to add to ${sel.length} element(s)` : `Tag to remove from ${sel.length} element(s)`, "");
+    const t = v?.trim().replace(/^#/, "");
+    if (t) void run(`${add ? "Tagged" : "Untagged"} ${sel.length}: #${t}`, () => api.tagMany(sel, t, add));
+  };
   const askDelete = () => {
     if (window.confirm(`Delete ${sel.length} element(s)? Children that aren't selected move to the top level. (You can undo right after.)`)) void bulk("delete");
   };
@@ -235,6 +295,8 @@ export function BrowserView({ initialQuery, today, version, notify, onOpen, onRe
       ...(anyItem ? [{ label: allWork ? `Clear “needs work”${n}` : `Flag “needs work”${n}`, onClick: () => setFlag("needs_work", !allWork) } as MenuEntry] : []),
       ...(anyActive ? ([{ label: `Dismiss${n}`, onClick: () => bulk("dismiss") }, { label: `Done!${n}`, onClick: () => bulk("done") }] as MenuEntry[]) : []),
       ...(anyInactive ? [{ label: `Restore${n}`, onClick: () => bulk("restore") } as MenuEntry] : []),
+      { label: `Add tag…${n}`, onClick: () => askTag(true), hint: "T" },
+      ...(sel.some((id) => byId.get(id)?.tags.length) ? [{ label: `Remove tag…${n}`, onClick: () => askTag(false) } as MenuEntry] : []),
       { label: `Export to Anki${n}`, onClick: () => void exportSel() },
       "separator",
       { label: `Delete…${n}`, onClick: askDelete, danger: true, hint: "Del" },
@@ -263,6 +325,7 @@ export function BrowserView({ initialQuery, today, version, notify, onOpen, onRe
     else if (k.toLowerCase() === "p" && sel.length) askPriority();
     else if (k.toLowerCase() === "a" && !ev.ctrlKey && !ev.metaKey && sel.length) askAfactor();
     else if (k.toLowerCase() === "m" && sel.length) void startMove();
+    else if (k.toLowerCase() === "t" && sel.length) askTag(true);
     else if (k.toLowerCase() === "r") reviewSelection();
     else if (k === "a" && (ev.ctrlKey || ev.metaKey)) setSelected(new Set(shown.map((r) => r.id)));
     else if (k === "/") input.current?.focus();
@@ -272,12 +335,12 @@ export function BrowserView({ initialQuery, today, version, notify, onOpen, onRe
     ev.preventDefault();
   };
 
-  const header = (c: (typeof COLUMNS)[number]) => (
+  const header = (c: Column) => (
     <th
       key={c.key}
       className={`${c.cls ?? ""} ${sort.key === c.key ? "sorted" : ""}`}
       title={c.title ? `${c.title} — click to sort` : "Click to sort"}
-      onClick={() => setSort((s) => ({ key: c.key, desc: s.key === c.key ? !s.desc : c.key === "updated" || c.key === "lapses" }))}
+      onClick={() => setSort((s) => ({ key: c.key, desc: s.key === c.key ? !s.desc : ["updated", "created", "lapses", "chars", "stability"].includes(c.key) }))}
     >
       {c.label}
       {sort.key === c.key ? (sort.desc ? " ▾" : " ▴") : ""}
@@ -285,6 +348,79 @@ export function BrowserView({ initialQuery, today, version, notify, onOpen, onRe
   );
 
   const now = Date.now() / 1000;
+  const commitPriority = async (id: number, v: string) => {
+    setEditing(null);
+    const n = Number(v);
+    if (v.trim() === "" || Number.isNaN(n)) return;
+    await run(`Priority ${Math.max(0, Math.min(100, n))}%`, () => api.setPriority(id, Math.max(0, Math.min(100, n))));
+  };
+  const cell = (k: SortKey, r: BrowseRow, due: string) => {
+    switch (k) {
+      case "rank":
+        return r.status === "active" ? Math.round(r.prank) : "";
+      case "kind":
+        return (
+          <span title={`${r.subtype}${r.status === "active" ? ` · ${bandOf(r.priority).label} priority` : ""}`} className={`badge ${r.kind} band-${r.status === "active" ? bandOf(r.priority).name : "none"}`}>
+            {r.kind === "item" ? "Q" : r.subtype[0].toUpperCase()}
+          </span>
+        );
+      case "title":
+        return (
+          <span title={r.title}>
+            {r.pinned && "📌 "}
+            {r.title}
+            {r.children > 0 && <span className="muted small"> · {r.children}</span>}
+            {r.kind === "item" && r.lapses >= LEECH_LAPSES && <span className="marker warn" title="Leech"> ⚠</span>}
+            {r.needs_work && <span className="marker" title="Needs work"> ✎</span>}
+          </span>
+        );
+      case "priority":
+        if (editing === r.id)
+          return (
+            <input
+              className="cell-input"
+              autoFocus
+              defaultValue={Math.round(r.priority)}
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => {
+                e.stopPropagation();
+                if (e.key === "Enter") void commitPriority(r.id, (e.target as HTMLInputElement).value);
+                if (e.key === "Escape") setEditing(null);
+              }}
+              onBlur={(e) => void commitPriority(r.id, e.target.value)}
+            />
+          );
+        return r.status === "active" || r.status === "inbox" ? (
+          <span className="editable" title="Double-click to type a priority" onDoubleClick={(e) => (e.stopPropagation(), setEditing(r.id))}>
+            {Math.round(r.priority)}%
+          </span>
+        ) : (
+          ""
+        );
+      case "due":
+        return due;
+      case "interval":
+        return r.interval_days != null && r.subtype !== "note" ? fmtDays(r.interval_days) : "";
+      case "afactor":
+        return r.afactor != null && r.subtype !== "note" ? r.afactor.toFixed(2) : "";
+      case "reps":
+        return r.reps || "";
+      case "lapses":
+        return r.lapses || "";
+      case "retrievability":
+        return r.retrievability != null ? `${Math.round(r.retrievability * 100)}%` : "";
+      case "stability":
+        return r.stability != null ? fmtDays(Math.round(r.stability)) : "";
+      case "tags":
+        return r.tags.map((t) => `#${t}`).join(" ");
+      case "chars":
+        return r.text_len ? (r.text_len >= 1000 ? `${Math.round(r.text_len / 1000)}k` : r.text_len) : "";
+      case "created":
+        return ago(r.created_at, now);
+      case "updated":
+        return ago(r.updated_at, now);
+    }
+  };
   const preview = cursor != null && byId.has(cursor) ? cursor : sel[0] ?? null;
 
   return (
@@ -319,6 +455,13 @@ export function BrowserView({ initialQuery, today, version, notify, onOpen, onRe
             {p.label}
           </button>
         ))}
+        {saved.map((x) => (
+          <span key={x.label} className={`chip-btn saved ${applied === x.query ? "active" : ""}`}>
+            <a onClick={() => setSearch(x.query)} title={x.query}>★ {x.label}</a>
+            <a className="x" title="Forget this search" onClick={() => storeSaved(saved.filter((y) => y !== x))}>×</a>
+          </span>
+        ))}
+        <button className="chip-btn" onClick={saveSearch} title="Save the current search as a chip">+ Save search</button>
         {parsed.errors.length > 0 && <span className="warn-text small">{parsed.errors.join("; ")}</span>}
       </div>
       {sel.length > 0 && (
@@ -335,8 +478,15 @@ export function BrowserView({ initialQuery, today, version, notify, onOpen, onRe
       <div className="browser-split">
         <div className="browser-table" ref={table} tabIndex={0} onKeyDown={onKeyDown}>
           <table>
+            <colgroup>
+              {columns.map((c) => (
+                <col key={c.key} style={c.width ? { width: c.width } : undefined} />
+              ))}
+            </colgroup>
             <thead>
-              <tr>{COLUMNS.map(header)}</tr>
+              <tr onContextMenu={(e) => (e.preventDefault(), setColMenu({ x: e.clientX, y: e.clientY }))} title="Right-click to choose columns">
+                {columns.map(header)}
+              </tr>
             </thead>
             <tbody>
               {shown.slice(0, limit).map((r) => {
@@ -355,24 +505,11 @@ export function BrowserView({ initialQuery, today, version, notify, onOpen, onRe
                       setMenu({ x: e.clientX, y: e.clientY });
                     }}
                   >
-                    <td className="num muted">{r.status === "active" ? Math.round(r.prank) : ""}</td>
-                    <td title={`${r.subtype}${r.status === "active" ? ` · ${bandOf(r.priority).label} priority` : ""}`}>
-                      <span className={`badge ${r.kind} band-${r.status === "active" ? bandOf(r.priority).name : "none"}`}>{r.kind === "item" ? "Q" : r.subtype[0].toUpperCase()}</span>
-                    </td>
-                    <td className="title-cell" title={r.title}>
-                      {r.pinned && "📌 "}
-                      {r.title}
-                      {r.children > 0 && <span className="muted small"> · {r.children}</span>}
-                      {r.kind === "item" && r.lapses >= LEECH_LAPSES && <span className="marker warn" title="Leech"> ⚠</span>}
-                      {r.needs_work && <span className="marker" title="Needs work"> ✎</span>}
-                    </td>
-                    <td className="num">{r.status === "active" || r.status === "inbox" ? `${Math.round(r.priority)}%` : ""}</td>
-                    <td className={`num ${overdue ? "warn-text" : ""}`}>{due}</td>
-                    <td className="num">{r.interval_days != null && r.subtype !== "note" ? fmtDays(r.interval_days) : ""}</td>
-                    <td className="num">{r.afactor != null && r.subtype !== "note" ? r.afactor.toFixed(2) : ""}</td>
-                    <td className="num">{r.reps || ""}</td>
-                    <td className="num">{r.lapses || ""}</td>
-                    <td className="num muted">{ago(r.updated_at, now)}</td>
+                    {columns.map((c) => (
+                      <td key={c.key} className={`${c.cls ?? ""} ${c.key === "title" ? "title-cell" : ""} ${c.key === "due" && overdue ? "warn-text" : ""}`}>
+                        {cell(c.key, r, due)}
+                      </td>
+                    ))}
                   </tr>
                 );
               })}
@@ -412,6 +549,14 @@ export function BrowserView({ initialQuery, today, version, notify, onOpen, onRe
           </div>
         )}
       </div>
+      {colMenu && (
+        <ContextMenu
+          x={colMenu.x}
+          y={colMenu.y}
+          entries={COLUMNS.filter((c) => c.key !== "title").map((c) => ({ label: `${cols.includes(c.key) ? "✓ " : "   "}${c.title ?? c.label}`, onClick: () => toggleCol(c.key) }))}
+          onClose={() => setColMenu(null)}
+        />
+      )}
       {menu && sel.length > 0 && <ContextMenu x={menu.x} y={menu.y} entries={menuEntries()} onClose={() => setMenu(null)} />}
       {moving && (
         <MoveDialog
