@@ -1,0 +1,12 @@
+:root { color-scheme: light dark; --muted: #6b7280; --accent: #2f5d8a; }
+body { font: 13px/1.45 system-ui, "Segoe UI", sans-serif; margin: 12px; width: 320px; }
+body.options { width: auto; max-width: 560px; margin: 32px auto; }
+h1 { font-size: 15px; margin: 0 0 6px; }
+.muted { color: var(--muted); }
+.small { font-size: 11px; }
+.row { display: flex; align-items: center; gap: 8px; margin: 10px 0; }
+.row input[type="range"] { flex: 1; }
+.row input[type="password"] { flex: 1; padding: 5px 8px; }
+button { font: inherit; padding: 5px 12px; border-radius: 6px; border: 1px solid #ccc; background: transparent; cursor: pointer; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+#title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin: 0; }

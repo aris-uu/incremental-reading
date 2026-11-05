@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Incremental Reading — Send to Inbox",
+  "version": "0.1.0",
+  "description": "Send the current article, or the selected part of it, to the Incremental Reading app's Inbox.",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": ["http://127.0.0.1:47811/*"],
+  "action": { "default_popup": "popup.html", "default_title": "Send to Incremental Reading" },
+  "options_page": "options.html",
+  "commands": {
+    "_execute_action": { "suggested_key": { "default": "Alt+Shift+I" } }
+  }
+}

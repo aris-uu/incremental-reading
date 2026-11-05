@@ -1,0 +1,27 @@
+[package]
+name = "incremental-reading"
+version = "0.0.1"
+edition = "2021"
+
+[lib]
+name = "ir_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.41", features = ["bundled"] }
+fsrs = "6"
+chrono = "0.4"
+ureq = "2"
+sha2 = "0.10"
+getrandom = "0.3"
+tiny_http = "0.12"
+tauri-plugin-opener = "2"
+
+[profile.dev.package."*"]
+opt-level = 2

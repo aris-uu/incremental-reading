@@ -1,0 +1,399 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { Notify } from "../notify";
+import { EditorContent, useEditor, type Editor } from "@tiptap/react";
+import type { EditorState } from "@tiptap/pm/state";
+import { api, fmtDays, type ElementFull } from "../api";
+import { EMPTY_DOC, extensions, parseDoc, readPointKey, stripIrMarks, textDoc } from "../editor/extensions";
+import { ElementHeader } from "./ElementHeader";
+import { FormatBar } from "../editor/FormatBar";
+import { PdfView } from "./PdfView";
+
+export type TopicOutcome = "next" | "later" | "done" | "dismiss" | "rescheduled" | "restored";
+
+export interface TopicViewProps {
+  element: ElementFull;
+  /** In the queue, actions schedule and advance. In browse mode they only schedule. */
+  mode: "learn" | "browse";
+  onFinish: (outcome: TopicOutcome) => void;
+  onOpen?: (id: number) => void;
+  /** Something visible in the tree changed (new child, title, priority). */
+  onChanged?: () => void;
+  onDelete?: () => void;
+  onReviewBranch?: (id: number) => void;
+  notify: Notify;
+}
+
+const LEAF = "\ufffc"; // stands in for math and other atoms when scanning text
+
+/**
+ * Cloze from a selection inside one paragraph. The question is the sentence
+ * around it with the keyword replaced by [...], keeping formatting and math.
+ */
+function clozeDocs(state: EditorState, from: number, to: number) {
+  const $from = state.doc.resolve(from);
+  const block = $from.parent;
+  const start0 = $from.start();
+  const end0 = $from.end();
+  const ch = (p: number) => (p < start0 || p >= end0 ? "" : state.doc.textBetween(p, p + 1, "", LEAF));
+  let start = start0;
+  for (let p = from - 1; p > start0; p--) {
+    if (/[.!?]/.test(ch(p - 1)) && /\s/.test(ch(p))) {
+      start = p;
+      break;
+    }
+  }
+  while (start < from && /\s/.test(ch(start))) start++;
+  let end = end0;
+  for (let p = to; p < end0; p++) {
+    if (/[.!?]/.test(ch(p)) && (p + 1 >= end0 || /\s/.test(ch(p + 1)))) {
+      end = p + 1;
+      break;
+    }
+  }
+  const inline = (a: number, b: number): any[] => (b > a ? stripIrMarks(block.slice(a - start0, b - start0).content.toJSON() ?? []) : []);
+  const para = (content: any[]) => ({ type: "doc", content: [content.length ? { type: "paragraph", content } : { type: "paragraph" }] });
+  return {
+    question: para([...inline(start, from), { type: "text", text: "[...]" }, ...inline(to, end)]),
+    answer: para(inline(from, to)),
+  };
+}
+
+/** Reading speed for the "minutes left" estimate (≈230 words/min). */
+const CHARS_PER_MINUTE = 1150;
+
+type Props = TopicViewProps;
+
+/** Topics: rich-text reader, or the PDF reader for PDF topics. */
+export function TopicView(props: Props) {
+  return props.element.topic?.pdf_asset ? <PdfView {...props} /> : <TextTopicView {...props} />;
+}
+
+function TextTopicView({ element, mode, onFinish, onOpen, onChanged, onDelete, onReviewBranch, notify }: Props) {
+  const id = element.id;
+  const topic = element.topic!;
+  const active = element.status === "active";
+  const dirty = useRef(false);
+  const saveTimer = useRef<number | undefined>(undefined);
+  const [busy, setBusy] = useState(false);
+  const readerRef = useRef<HTMLDivElement>(null);
+  /** Floating toolbar position (relative to the reader), shown while text is selected. */
+  const [selBox, setSelBox] = useState<{ top: number; left: number } | null>(null);
+  const [progress, setProgress] = useState<{ pct: number; minutes: number } | null>(null);
+  /** Set once the reader places a read point; otherwise one is placed automatically on leaving. */
+  const explicitRp = useRef(false);
+
+  const editor = useEditor({
+    extensions,
+    content: parseDoc(topic.doc_json),
+    editorProps: {
+      // Ctrl+click an extracted or clozed span to open its child element.
+      handleClick(_view, _pos, event) {
+        const span = (event.target as HTMLElement).closest("[data-extract],[data-cloze]") as HTMLElement | null;
+        if (!span || !(event.ctrlKey || event.metaKey) || !onOpen) return false;
+        const cid = Number(span.dataset.extract ?? span.dataset.cloze);
+        if (cid) onOpen(cid);
+        return true;
+      },
+    },
+    onUpdate: () => {
+      dirty.current = true;
+      window.clearTimeout(saveTimer.current);
+      saveTimer.current = window.setTimeout(() => void save(), 800);
+    },
+    onSelectionUpdate: ({ editor: ed }) => placeToolbar(ed),
+    onBlur: () => setSelBox(null),
+  });
+
+  /** Put the selection toolbar just above the selection. */
+  const placeToolbar = (ed: Editor) => {
+    const { from, to, empty } = ed.state.selection;
+    const box = readerRef.current;
+    if (empty || !box) return setSelBox(null);
+    const a = ed.view.coordsAtPos(from);
+    const b = ed.view.coordsAtPos(to);
+    const r = box.getBoundingClientRect();
+    const left = Math.max(8, Math.min((a.left + b.left) / 2 - r.left - 150, r.width - 320));
+    setSelBox({ top: Math.min(a.top, b.top) - r.top + box.scrollTop - 42, left });
+  };
+
+  /** Where the reader is: read point (or top of the viewport) through the text. */
+  const updateProgress = useCallback(() => {
+    if (!editor || !readerRef.current) return;
+    const size = editor.state.doc.content.size || 1;
+    const box = readerRef.current.getBoundingClientRect();
+    const top = editor.view.posAtCoords({ left: box.left + 60, top: box.top + 12 })?.pos ?? 0;
+    const pos = Math.max(top, readPointKey.getState(editor.state) ?? 0);
+    const remaining = editor.state.doc.textBetween(Math.min(pos, size), size, " ", " ").length;
+    setProgress({ pct: Math.min(100, Math.round((pos / size) * 100)), minutes: Math.ceil(remaining / CHARS_PER_MINUTE) });
+  }, [editor]);
+
+  /** Leaving without a read point: bookmark the top of what's on screen. */
+  const autoReadPoint = useCallback(() => {
+    if (!editor || editor.isDestroyed || explicitRp.current || !readerRef.current || readerRef.current.scrollTop < 40) return;
+    const box = readerRef.current.getBoundingClientRect();
+    const pos = editor.view.posAtCoords({ left: box.left + 60, top: box.top + 12 })?.pos;
+    if (pos == null) return;
+    editor.view.dispatch(editor.state.tr.setMeta(readPointKey, pos));
+    dirty.current = true;
+  }, [editor]);
+
+  const save = useCallback(async () => {
+    window.clearTimeout(saveTimer.current);
+    if (!editor || !dirty.current) return;
+    dirty.current = false;
+    const rp = readPointKey.getState(editor.state) ?? null;
+    await api.saveTopic(id, JSON.stringify(editor.getJSON()), rp);
+  }, [editor, id]);
+
+  // Restore the read point and scroll to it once the editor exists.
+  useEffect(() => {
+    if (!editor) return;
+    const rp = topic.read_point;
+    if (rp != null && rp <= editor.state.doc.content.size) {
+      editor.view.dispatch(editor.state.tr.setMeta(readPointKey, rp));
+      editor.commands.setTextSelection(rp);
+      requestAnimationFrame(() => {
+        editor.view.dom.querySelector(".ir-readpoint")?.scrollIntoView({ block: "center" });
+        updateProgress();
+      });
+    } else requestAnimationFrame(updateProgress);
+    return () => {
+      autoReadPoint();
+      void save();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editor]);
+
+  const setReadPoint = useCallback(
+    (ed: Editor, pos?: number) => {
+      explicitRp.current = true;
+      ed.view.dispatch(ed.state.tr.setMeta(readPointKey, pos ?? ed.state.selection.to));
+      updateProgress();
+      dirty.current = true;
+      void save();
+    },
+    [save, updateProgress],
+  );
+
+  const extract = useCallback(async () => {
+    if (!editor) return;
+    const { from, to, empty } = editor.state.selection;
+    if (empty) return notify("Select text to extract");
+    const slice = editor.state.doc.slice(from, to);
+    let content: any[] = slice.content.toJSON() ?? [];
+    if (slice.content.firstChild?.isInline) content = [{ type: "paragraph", content }];
+    let doc: any = { type: "doc", content: stripIrMarks(content) };
+    try {
+      editor.schema.nodeFromJSON(doc).check();
+    } catch {
+      // Partial structure (e.g. a list item without its list): fall back to text.
+      const text = editor.state.doc.textBetween(from, to, "\n");
+      doc = { type: "doc", content: text.split("\n").filter(Boolean).map((t) => textDoc(t).content[0]) };
+    }
+    const childId = await api.createExtract(id, "", JSON.stringify(doc));
+    editor.chain().setTextSelection({ from, to }).setMark("extract", { id: childId }).setTextSelection(to).run();
+    setReadPoint(editor, to);
+    notify("Extract created");
+    onChanged?.();
+  }, [editor, id, notify, onChanged, setReadPoint]);
+
+  const cloze = useCallback(async () => {
+    if (!editor) return;
+    const { state } = editor;
+    const { from, to, empty, $from, $to } = state.selection;
+    if (empty) return notify("Select a keyword to cloze");
+    if (!$from.sameParent($to) || !$from.parent.isTextblock) return notify("A cloze must be inside one paragraph");
+    const { question, answer } = clozeDocs(state, from, to);
+    const itemId = await api.createItem(id, "cloze", JSON.stringify(question), JSON.stringify(answer));
+    editor.chain().setTextSelection({ from, to }).setMark("cloze", { id: itemId }).setTextSelection(to).run();
+    notify("Cloze created");
+    onChanged?.();
+  }, [editor, id, notify, onChanged]);
+
+  /** New Q&A item under this topic; the selection (if any) seeds the answer. */
+  const addQa = useCallback(async () => {
+    if (!editor) return;
+    const { from, to, empty } = editor.state.selection;
+    const answer = empty ? "" : editor.state.doc.textBetween(from, to, " ").trim();
+    const itemId = await api.createItem(id, "qa", JSON.stringify(EMPTY_DOC), JSON.stringify(textDoc(answer)));
+    await save();
+    onChanged?.();
+    onOpen?.(itemId);
+  }, [editor, id, onChanged, onOpen, save]);
+
+  /**
+   * Dismember: one child topic per section at the highest heading level, then
+   * Done! on this topic (its text is archived; the children carry on).
+   */
+  const splitByHeadings = useCallback(async () => {
+    if (!editor) return;
+    const nodes: any[] = editor.getJSON().content ?? [];
+    const levels = nodes.filter((n) => n.type === "heading").map((n) => n.attrs?.level ?? 1);
+    if (!levels.length) return notify("No headings to split at");
+    const level = Math.min(...levels);
+    const text = (n: any): string => (n.text ?? "") + (n.content ?? []).map(text).join("");
+    const sections: { title: string; nodes: any[] }[] = [];
+    for (const n of nodes) {
+      if (n.type === "heading" && (n.attrs?.level ?? 1) === level) sections.push({ title: text(n).trim() || "Section", nodes: [n] });
+      else if (sections.length) sections[sections.length - 1].nodes.push(n);
+      else sections.push({ title: "Introduction", nodes: [n] });
+    }
+    const real = sections.filter((s) => s.nodes.some((n) => text(n).trim()));
+    if (real.length < 2) return notify("Only one section; nothing to split");
+    if (!window.confirm(`Split into ${real.length} topics at heading level ${level}? This topic's text moves into them (Done!).`)) return;
+    await save();
+    const ids: number[] = [];
+    for (const s of real) ids.push(await api.createExtract(id, s.title, JSON.stringify({ type: "doc", content: stripIrMarks(s.nodes) })));
+    // Keep the sections together, in reading order, just after this topic in the queue.
+    await api.bulk(ids, "priority", element.priority);
+    notify(`Split into ${real.length} topics`);
+    onChanged?.();
+    await finish("done");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editor, id, notify, onChanged, save]);
+
+  const ignore = useCallback(() => {
+    if (!editor || editor.state.selection.empty) return;
+    editor.chain().toggleMark("ignore").run();
+  }, [editor]);
+
+  /** Remove everything before the cursor (text already processed). */
+  const deleteBefore = useCallback(() => {
+    if (!editor) return;
+    const { from } = editor.state.selection;
+    if (from <= 1) return;
+    editor.view.dispatch(editor.state.tr.delete(0, from).setMeta(readPointKey, 0));
+    editor.commands.setTextSelection(1);
+    notify("Deleted text before the cursor");
+  }, [editor, notify]);
+
+  const finish = useCallback(
+    async (outcome: TopicOutcome, days?: number) => {
+      if (busy) return;
+      setBusy(true);
+      try {
+        if (outcome !== "done") autoReadPoint();
+        await save();
+        if (outcome === "next") notify(`Next read in ${fmtDays(await api.topicRead(id))}`);
+        else if (outcome === "done") {
+          await api.done(id);
+          notify("Done! — text removed, extracts kept", { undo: true });
+        } else if (outcome === "dismiss") {
+          await api.dismiss(id);
+          notify("Dismissed", { undo: true });
+        }
+        else if (outcome === "restored") await api.restore(id);
+        else if (outcome === "rescheduled" && days != null) {
+          await api.reschedule(id, days);
+          notify(`Rescheduled to ${fmtDays(days)}`, { undo: true });
+        }
+        onFinish(outcome);
+      } catch (e) {
+        notify(String(e));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [autoReadPoint, busy, id, notify, onFinish, save],
+  );
+
+  const askReschedule = useCallback(() => {
+    const v = window.prompt("Next review in how many days?", String(Math.max(1, topic.interval_days)));
+    const n = v == null ? NaN : parseInt(v, 10);
+    if (!Number.isNaN(n)) void finish("rescheduled", n);
+  }, [finish, topic.interval_days]);
+
+  useEffect(() => {
+    const onKey = (ev: KeyboardEvent) => {
+      const k = ev.key.toLowerCase();
+      const run = (f: () => unknown) => (ev.preventDefault(), void f());
+      if (ev.altKey && k === "x") return run(extract);
+      if (ev.altKey && k === "z") return run(cloze);
+      if (ev.altKey && k === "a") return run(addQa);
+      if (ev.altKey && k === "i") return run(ignore);
+      if (ev.altKey && ev.key === "\\") return run(deleteBefore);
+      if ((ev.altKey && k === "r") || (ev.ctrlKey && ev.key === "F7")) return run(() => editor && setReadPoint(editor));
+      if (!active) return;
+      if (ev.ctrlKey && ev.shiftKey && k === "enter") return run(() => finish("done"));
+      if (ev.ctrlKey && k === "enter") return run(() => finish("next"));
+      if (ev.ctrlKey && k === "j") return run(askReschedule);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [active, addQa, askReschedule, cloze, deleteBefore, editor, extract, finish, ignore, setReadPoint]);
+
+  return (
+    <div className="element-view">
+      <ElementHeader
+        element={element}
+        onOpen={onOpen}
+        onChanged={onChanged}
+        onReviewBranch={onReviewBranch}
+        onRestore={() => finish("restored")}
+      />
+      <div className="toolbar">
+        <button onClick={extract} title="Alt+X">Extract</button>
+        <button onClick={cloze} title="Alt+Z">Cloze</button>
+        <button onClick={addQa} title="Alt+A — selection becomes the answer">Q&amp;A</button>
+        <button onClick={ignore} title="Alt+I">Ignore</button>
+        <button onClick={() => editor && setReadPoint(editor)} title="Alt+R / Ctrl+F7">Read point</button>
+        <button onClick={deleteBefore} title="Alt+\ — delete everything before the cursor">Delete before</button>
+        <button onClick={splitByHeadings} title="One child topic per section (SuperMemo's Dismember)">Split</button>
+        <span className="spacer" />
+        <span className="muted small">
+          {progress && `${progress.pct}% · ~${progress.minutes} min left · `}interval {fmtDays(topic.interval_days)} · A-Factor{" "}
+          {topic.afactor.toFixed(2)}
+        </span>
+      </div>
+      <FormatBar editor={editor} />
+      <div className="read-progress">
+        <div style={{ width: `${progress?.pct ?? 0}%` }} />
+      </div>
+      <div
+        className="reader"
+        ref={readerRef}
+        onScroll={() => {
+          if (selBox && editor) placeToolbar(editor);
+          requestAnimationFrame(updateProgress);
+        }}
+      >
+        {selBox && (
+          <div className="sel-toolbar" style={{ top: selBox.top, left: selBox.left }} onMouseDown={(e) => e.preventDefault()}>
+            <button onClick={extract}>Extract <kbd>Alt+X</kbd></button>
+            <button onClick={cloze}>Cloze <kbd>Alt+Z</kbd></button>
+            <button onClick={addQa}>Q&amp;A <kbd>Alt+A</kbd></button>
+            <button onClick={ignore}>Ignore</button>
+            <button onClick={() => editor && setReadPoint(editor)} title="Read point here">◆</button>
+          </div>
+        )}
+        <EditorContent editor={editor} />
+      </div>
+      <footer className="actions">
+        {active && (
+          <>
+            <button className="primary" disabled={busy} onClick={() => finish("next")} title="Ctrl+Enter">
+              {mode === "learn" ? "Next" : "Mark read"}
+            </button>
+            {mode === "learn" && <button disabled={busy} onClick={() => finish("later")}>Later today</button>}
+          </>
+        )}
+        <button disabled={busy} onClick={askReschedule} title="Ctrl+J">Reschedule…</button>
+        {active && (
+          <button disabled={busy} onClick={() => finish("rescheduled", 100)} title="Come back in 100 days">
+            Don't get it · +100d
+          </button>
+        )}
+        <span className="spacer" />
+        {onDelete && <button disabled={busy} className="danger" onClick={onDelete}>Delete</button>}
+        {active && (
+          <>
+            <button disabled={busy} onClick={() => finish("dismiss")} title="Stop reading; keep text and children">Dismiss</button>
+            <button disabled={busy} onClick={() => finish("done")} title="Ctrl+Shift+Enter — remove the text, keep extracts and clozes">
+              Done!
+            </button>
+          </>
+        )}
+      </footer>
+    </div>
+  );
+}

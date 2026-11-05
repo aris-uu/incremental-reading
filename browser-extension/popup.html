@@ -1,0 +1,23 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <h1>Send to Incremental Reading</h1>
+    <p id="title" class="muted"></p>
+    <label class="row">
+      Priority
+      <input id="priority" type="range" min="0" max="100" value="50" />
+      <span id="pval">50%</span>
+    </label>
+    <div class="row">
+      <button id="page" class="primary">Send article</button>
+      <button id="selection">Send selection</button>
+    </div>
+    <p id="status" class="muted"></p>
+    <p class="muted small"><a href="options.html" target="_blank">Settings</a> · the app must be running</p>
+    <script src="popup.js"></script>
+  </body>
+</html>
