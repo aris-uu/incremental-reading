@@ -7,7 +7,7 @@ import type { Notify } from "./notify";
 
 /** Characters sent to Yomitan from the cursor on (it finds the longest word). */
 const SCAN = 20;
-const BLOCKS = "p, li, h1, h2, h3, h4, h5, h6, blockquote, td, .hook-line";
+const BLOCKS = "p, li, h1, h2, h3, h4, h5, h6, blockquote, td";
 
 interface Hit {
   block: HTMLElement;

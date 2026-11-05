@@ -591,15 +591,7 @@ button { white-space: nowrap; }
 .hover-meta { font-size: 12px; font-family: var(--ui-font); color: var(--muted); }
 
 /* ----- Texthooker ----- */
-.hooker { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.hooker-bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 16px; border-bottom: 1px solid var(--border); }
-.hooker-bar textarea { flex: 1; font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; resize: vertical; }
-.hooker-url { width: 220px; font-family: ui-monospace, monospace; font-size: 12px; }
-.hook-lines { flex: 1; overflow: auto; padding: 12px 24px 40px; font-family: var(--reader-font); font-size: calc(var(--reader-size) * 1.35); line-height: 1.75; }
-.hook-line { display: flex; gap: 8px; align-items: baseline; max-width: var(--reader-width); margin: 0 auto 0.6em; }
-.hook-text { flex: 1; }
-.hook-x { opacity: 0; }
-.hook-line:hover .hook-x { opacity: 0.6; }
+.hook-chip { display: inline-flex; gap: 4px; align-items: center; margin-right: 10px; }
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--border); vertical-align: middle; }
 .dot.connected { background: #16a34a; }
 .dot.connecting { background: #f59e0b; }

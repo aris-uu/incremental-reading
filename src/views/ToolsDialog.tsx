@@ -505,6 +505,10 @@ function JapaneseTab({ notify }: { notify: Notify }) {
           <input value={p.definitionMarker} placeholder="e.g. single-glossary-jitendexorg-2026-01-04 (optional)" onChange={(e) => set({ definitionMarker: e.target.value })} />
         </label>
         <label>
+          texthooker WebSocket
+          <input value={p.hookerUrl} placeholder="ws://localhost:6677" onChange={(e) => set({ hookerUrl: e.target.value.trim() })} />
+        </label>
+        <label>
           dictionary popup
           <select value={p.hover} onChange={(e) => set({ hover: e.target.value as Prefs["hover"] })}>
             <option value="shift">hold Shift over a word</option>

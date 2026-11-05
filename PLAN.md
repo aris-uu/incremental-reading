@@ -438,13 +438,12 @@ The aim is more retained knowledge per minute, not more reviews. Each idea below
   - Hold Shift over a word (or just rest the mouse, per the setting) in the reader or the texthooker. The text from the cursor goes to the Yomitan API (`/ankiFields` with `cloze-body`), which finds the longest match; that word is highlighted in the text.
   - The popup shows up to 3 entries with reading, pitch, frequency and gloss.
   - **＋** makes a sentence card from the sentence under the cursor, with the audio stored. In the reader, the word gets a link mark back to the card.
-- **Texthooker** (top bar → Hooker):
-  - The app connects as a client to the hook's WebSocket (`ws://localhost:6677` by default, the same one texthooker UIs use with Textractor's WebSocket extension, LunaTranslator or agent). JSON messages (`{sentence}`, `{text}`) are understood as well as plain text.
-  - Lines are shown big, de-duplicated and auto-scrolled, and each one is **written into a topic** "VN › Route" (created on the fly, nesting with `::`). A timestamped heading marks each session.
-  - Reading stats: characters, active time (pauses after 2 minutes idle) and characters per hour.
-  - Pause, hide a line, paste lines by hand.
-  - Hover lookup and Alt+S sentence cards work on the lines.
-  - It keeps running while you use the rest of the app, and the session topic becomes an ordinary article to reread, extract and mine from later.
+- **Texthooker as a topic option:**
+  - **Hook** in a topic's toolbar connects to the hook's WebSocket (`ws://localhost:6677` by default, set in Tools → Japanese & Yomitan). That's the address texthooker UIs use with Textractor's WebSocket extension, LunaTranslator or agent; JSON messages are understood as well as plain text.
+  - Every line received is **appended to that topic's text**: right in the open reader without moving your selection (so extract, cloze, read point, hover and Alt+S keep working), or written to the collection when the topic isn't open.
+  - A timestamped heading marks each session, and repeated lines are dropped.
+  - A chip in the top bar shows the hooked topic and line count, with × to stop.
+  - Name topics as you like (e.g. a "VN title" root with route or chapter children) and hook the one you're reading.
 
 ### Workflow
 1. **Sources:**

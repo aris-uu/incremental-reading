@@ -15,6 +15,7 @@ import { OcclusionDialog } from "./OcclusionDialog";
 import { AFactor } from "./AFactor";
 import { MineDialog } from "./MineDialog";
 import { LookupHover } from "../hover";
+import { useHooker } from "../texthooker";
 import { renderField, sentenceAround, yomitanFields } from "../japanese";
 import { timeFromHref } from "../youtube";
 
@@ -96,6 +97,8 @@ function TextTopicView({ element, mode, onFinish, onOpen, onChanged, onDelete, o
   /** For the time-per-read statistics. */
   const openedAt = useRef(Date.now());
   const isVideo = !!topic.video_id;
+  const hooker = useHooker();
+  const hooked = hooker?.target?.id === id;
   /** Sentence being mined (Alt+S). */
   const [mining, setMining] = useState<{ sentence: string; start: number; end: number } | null>(null);
   /** Dictionary popup (Alt+D). */
@@ -382,6 +385,24 @@ function TextTopicView({ element, mode, onFinish, onOpen, onChanged, onDelete, o
     [],
   );
 
+  // Texthooker on this topic: append each line as a paragraph at the end,
+  // without moving the selection, and follow along if already at the bottom.
+  useEffect(() => {
+    if (!hooker || !hooked || !editor) return;
+    return hooker.attach(id, (lines, heading) => {
+      if (editor.isDestroyed) return;
+      const box = readerRef.current;
+      const atBottom = !box || box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+      const nodes = [
+        ...(heading ? [{ type: "heading", attrs: { level: 3 }, content: [{ type: "text", text: heading }] }] : []),
+        ...lines.map((text) => ({ type: "paragraph", content: [{ type: "text", text }] })),
+      ];
+      if (editor.isEmpty) editor.commands.setContent({ type: "doc", content: nodes });
+      else editor.commands.insertContentAt(editor.state.doc.content.size, nodes, { updateSelection: false });
+      if (atBottom && box) requestAnimationFrame(() => (box.scrollTop = box.scrollHeight));
+    });
+  }, [editor, hooked, hooker, id]);
+
   /** The selection's sentence within its paragraph. */
   const selectedSentence = useCallback(() => {
     if (!editor) return null;
@@ -526,6 +547,21 @@ function TextTopicView({ element, mode, onFinish, onOpen, onChanged, onDelete, o
         <button onClick={deleteBefore} title="Alt+\ — delete everything before the cursor">Delete before</button>
         <button onClick={splitByHeadings} title="One child topic per section (SuperMemo's Dismember)">Split</button>
         <button onClick={occlude} title="Alt+O — click an image first; one item per covered region">Occlude</button>
+        {hooker && (
+          <button
+            className={hooked ? "active" : ""}
+            onClick={() => hooker.hook(hooked ? null : { id, title: element.title })}
+            title={hooked ? "Stop appending texthooker lines here" : "Texthooker: append lines from the hook's WebSocket to this topic (Tools → Japanese for the address)"}
+          >
+            {hooked ? (
+              <>
+                <span className={`dot ${hooker.status}`} /> Hooked · {hooker.count.lines}
+              </>
+            ) : (
+              "Hook"
+            )}
+          </button>
+        )}
         <span className="toc-wrap">
           <button onClick={() => setTocOpen((o) => !o)} title="Table of contents">Contents ▾</button>
           {tocOpen && (
