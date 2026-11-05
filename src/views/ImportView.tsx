@@ -8,7 +8,7 @@ import { EMPTY_DOC, extensions, htmlToDoc } from "../editor/extensions";
 import { COLLECTION_CHANGED } from "../importWindow";
 import { FormatBar } from "../editor/FormatBar";
 import { SUPPORTED, importFiles } from "../importers";
-import { fetchVideoInfo, youtubeId, youtubeStart } from "../youtube";
+import { fetchVideoInfo, parsePastedTranscript, youtubeId, youtubeStart } from "../youtube";
 
 /** Extract the readable article from a fetched page. */
 function readable(html: string, url: string) {
@@ -77,7 +77,7 @@ export function ImportView() {
         setStatus(
           info.transcript
             ? `Video with a ${info.language ?? ""} transcript. Extract and cloze from the text; timestamps jump the player.`
-            : "Video without a transcript (or YouTube didn't share it). You can paste one below, or add the video alone.",
+            : "No transcript fetched. Paste YouTube's “Show transcript” text below and click “Link pasted transcript”, or add the video alone.",
         );
       } catch (e) {
         setStatus(`Fetch failed: ${e}`);
@@ -200,6 +200,20 @@ export function ImportView() {
         </label>
         <span className="spacer" />
         {video && <span className="chip">▶ incremental video</span>}
+        {video && (
+          <button
+            className="small-btn"
+            title="Paste the text from YouTube's “Show transcript” panel below, then click to turn its timestamps into links"
+            onClick={() => {
+              const doc = editor && parsePastedTranscript(editor.getText({ blockSeparator: "\n" }));
+              if (!doc) return setStatus("No timestamps found. Paste the transcript text (with its 0:00 times) first.");
+              editor!.commands.setContent(doc);
+              setStatus("Transcript linked: timestamps now jump the player.");
+            }}
+          >
+            Link pasted transcript
+          </button>
+        )}
         {(site || author) && <span className="muted small">{[site, author].filter(Boolean).join(" · ")}</span>}
       </div>
       <FormatBar editor={editor} />

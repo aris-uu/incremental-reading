@@ -1,6 +1,6 @@
 # Modern Incremental Reading — Brainstorm & Plan
 
-Status: draft for discussion (2026-11-04). Nothing is built yet.
+Status: phases 0–2 and the round-2 UI list are built (2026-11-05); phase 3 has started with incremental video. See the status notes under each phase.
 
 ## 1. What incremental reading actually is
 
@@ -154,7 +154,7 @@ These would run locally or through an API key you supply.
 
 **Phase 1: MVP that meets the minimum definition**
 
-*Status (2026-11-04): everything below is built except the Anki .apkg export. Not yet tested by hand: the browser extension end to end, and image localization on a real article.*
+*Status (2026-11-05): everything below is built, including the Anki .apkg export (Tools → Backup & export, or right-click a branch). Not yet tested by hand: the browser extension end to end, image localization on a real article, and importing an export into Anki itself.*
 
 - Browser extension import (Readability + images), URL import, and paste.
 - Inbox triage, priority queue, auto-sort, auto-postpone, and Later today.
@@ -170,13 +170,21 @@ These would run locally or through an API key you supply.
 *Status (2026-11-04):*
 - *Built:* PDF reader (text and region extracts, page read point, marks), EPUB, FSRS optimizer, per-priority retention, stats, folder and file import, split by headings.
 - *Also built:* tree multi-select, context menus, drag-and-drop with manual order, items as parents, arrow-key navigation.
-- *Not built:* image occlusion.
+- *Also built (2026-11-05):* image occlusion. Select an image in a topic and press Occlude (Alt+O), or use "New image occlusion from a file…" in the palette; drag to cover regions, which gives one hide-all/guess-one item per region.
 
 - PDF reader with region extracts, and EPUB.
 - FSRS optimizer, per-priority retention, and a stats dashboard.
 - Bulk folder import, splitting articles by headings, image occlusion.
 
 **Phase 3: Everywhere**
+
+*Status (2026-11-05):*
+- *Built:* **incremental video (YouTube).** Paste a YouTube link in the import window, or send it from the browser extension.
+  - The topic shows the player and saves a resume position, the video equivalent of a read point.
+  - Marking a start and an end (Alt+B / Alt+E) makes a **clip extract**, a child topic that plays just that range and carries the matching transcript paragraphs.
+  - The transcript becomes the topic's text, so extract and cloze work as usual, and its `[m:ss]` timestamps seek the player. Fetching transcripts is best effort because YouTube increasingly guards its caption endpoint; when it fails, paste the text from "Show transcript" and click "Link pasted transcript".
+- *Not built:* sync, the mobile app, podcasts, embeddings, AI assists.
+
 - Sync: either an op-log/CRDT (e.g. cr-sqlite) or simple file sync with conflict detection.
 - Tauri mobile app (reviewing and reading).
 - YouTube and podcast transcripts, embeddings, and the optional AI assists.
@@ -231,6 +239,11 @@ Priority is the concept people struggle with most.
 - **Built:** all ★ items, namely the selection toolbar, automatic read point with progress, triage by comparison, the "why" chip, item warnings, the Ctrl+K palette, and Undo (toast and Ctrl+Z).
 - **Priority** now works like SuperMemo's: the % is a position in one global queue.
 - **The editor** is live Markdown (Typora-style) with MathJax math.
+- **Also built (2026-11-05):** the rest of the list.
+  - In the reader: consecutive clozes (one counter instead of a toast each), a hover preview of extracts and clozes, focus mode (Ctrl+Shift+F) that dims text before the read point, and a theme setting (light, sepia, dark).
+  - Priority and the queue: priority bands on badges and in the "why" chip, the "Up next" drawer (skip, defer, reorder), time-boxed sessions with an end-of-session summary, a daily dashboard on the empty Learn screen, and an overload banner offering Mercy or Postpone.
+  - Items: leech flags, a "needs work" flag (Alt+W), and a context drawer on the answer side.
+  - Organising: breadcrumbs, tree filters (due, overdue, items, leeches, needs work, PDFs, videos, recently edited), and pinned roots.
 
 ## 9. Decisions (2026-11-04)
 

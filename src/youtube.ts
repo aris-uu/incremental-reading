@@ -147,6 +147,26 @@ export function transcriptDoc(cues: Cue[], every = 30) {
   };
 }
 
+/**
+ * Transcript text copied from YouTube's "Show transcript" panel: timestamps
+ * (`1:23` or `1:02:03`) on their own lines or at line starts, text after them.
+ * Returns null if it doesn't look like one.
+ */
+export function parsePastedTranscript(text: string) {
+  const cues: Cue[] = [];
+  const stamp = /^\s*(?:(\d+):)?(\d{1,2}):(\d{2})\s*(.*)$/;
+  for (const line of text.split(/\r?\n/)) {
+    const m = line.match(stamp);
+    if (m) cues.push({ start: Number(m[1] ?? 0) * 3600 + Number(m[2]) * 60 + Number(m[3]), text: m[4].trim() });
+    else if (cues.length && line.trim()) {
+      const last = cues[cues.length - 1];
+      last.text = `${last.text} ${line.trim()}`.trim();
+    }
+  }
+  const good = cues.filter((c) => c.text);
+  return good.length >= 3 ? transcriptDoc(good) : null;
+}
+
 /** Seconds from a transcript timestamp link (`#t=123`), or null. */
 export const timeFromHref = (href: string | null | undefined) => {
   const m = href?.match(/^#t=(\d+(?:\.\d+)?)$/);
