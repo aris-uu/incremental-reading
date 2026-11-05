@@ -107,6 +107,30 @@ export interface TreeNode {
   updated_at: number;
 }
 
+export interface BrowseRow {
+  id: number;
+  parent_id: number | null;
+  kind: Kind;
+  /** cloze, qa, occlusion; or text, pdf, video, note. */
+  subtype: string;
+  title: string;
+  priority: number;
+  prank: number;
+  status: Status;
+  due_day: number | null;
+  interval_days: number | null;
+  last_day: number | null;
+  reps: number;
+  lapses: number;
+  stability: number | null;
+  text_len: number;
+  children: number;
+  pinned: boolean;
+  needs_work: boolean;
+  created_at: number;
+  updated_at: number;
+}
+
 export interface SessionSummary {
   topics_read: number;
   items_graded: number;
@@ -259,6 +283,7 @@ export const api = {
   extensionInfo: () => invoke<{ port: number; token: string }>("extension_info"),
   backup: () => invoke<string>("backup"),
   dataDir: () => invoke<string>("data_dir"),
+  browseRows: () => invoke<BrowseRow[]>("browse_rows"),
   setFlag: (id: number, flag: "pinned" | "needs_work", value: boolean) => invoke<void>("set_flag", { id, flag, value }),
   sessionSummary: (sinceTs: number) => invoke<SessionSummary>("session_summary", { sinceTs }),
   exportItems: (roots: number[] | null) => invoke<ExportItem[]>("export_items", { roots }),

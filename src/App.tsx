@@ -15,12 +15,13 @@ import { TodayContext, type Notify } from "./notify";
 import { fetchVideoInfo, youtubeId } from "./youtube";
 import { exportToAnki } from "./ankiExport";
 import { OcclusionDialog } from "./views/OcclusionDialog";
+import { BrowserView } from "./views/BrowserView";
 
 const isTyping = (t: EventTarget | null) =>
   t instanceof HTMLElement && (t.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName));
 
 /** What the reader pane shows. */
-type View = { kind: "learn" } | { kind: "inbox" } | { kind: "stats" } | { kind: "browse"; id: number };
+type View = { kind: "learn" } | { kind: "inbox" } | { kind: "stats" } | { kind: "browse"; id: number } | { kind: "browser"; query: string };
 
 interface ExternalImport {
   title: string;
@@ -189,6 +190,8 @@ export default function App() {
     if (s.queue == null || s.pos >= s.queue.length) void s.load().then((m) => m && notify(m));
   }, [notify]);
   const open = useCallback((id: number) => setView({ kind: "browse", id }), []);
+  /** The element browser with a search (e.g. `under:12`, `is:due`). */
+  const browser = useCallback((query = "is:active") => setView({ kind: "browser", query }), []);
 
   /** Start a subset review (branch, search results) in the Learn pane. */
   const review = useCallback(
@@ -242,17 +245,26 @@ export default function App() {
       else if (ev.ctrlKey && ev.key === "\\") ev.preventDefault(), toggleSidebar();
       else if (ev.ctrlKey && !ev.shiftKey && k === "k") ev.preventDefault(), setPaletteOpen(true);
       else if (ev.ctrlKey && ev.shiftKey && k === "f") ev.preventDefault(), toggleFocus();
+      else if (ev.ctrlKey && ev.shiftKey && k === "b") ev.preventDefault(), browser();
       else if (ev.key === "Escape" && focus && !document.querySelector(".modal-backdrop")) toggleFocus();
       // Ctrl+Z outside a text field undoes the last tree/schedule action; inside, the editor's own undo applies.
       else if (ev.ctrlKey && !ev.shiftKey && k === "z" && !isTyping(ev.target)) ev.preventDefault(), void doUndo();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [doImport, doUndo, focus, learn, newItem, toggleFocus, toggleSidebar]);
+  }, [browser, doImport, doUndo, focus, learn, newItem, toggleFocus, toggleSidebar]);
 
+  const currentIdForPalette = () => (view.kind === "browse" ? view.id : view.kind === "learn" ? session.queue?.[session.pos]?.id ?? null : null);
   const commands: Command[] = [
     { label: "Learn: today's queue", hint: "Ctrl+L", run: learn },
     { label: "Inbox", run: () => setView({ kind: "inbox" }) },
+    { label: "Browser: priority queue", hint: "Ctrl+Shift+B", run: () => browser("is:active") },
+    { label: "Browser: due today", run: () => browser("is:due") },
+    { label: "Browser: leeches", run: () => browser("is:leech") },
+    { label: "Browser: needs work", run: () => browser("is:needs-work") },
+    ...(currentIdForPalette() != null
+      ? [{ label: "Browser: descendants of the open element", run: () => browser(`under:${currentIdForPalette()}`) }]
+      : []),
     { label: "Import…", hint: "Ctrl+N", run: doImport },
     { label: "New topic", run: () => void newTopic() },
     { label: "New item", hint: "Ctrl+Shift+N", run: () => void newItem() },
@@ -297,6 +309,9 @@ export default function App() {
         <button onClick={doImport} title="Opens the import window (Ctrl+N)">Import</button>
         <button onClick={newTopic} title="New topic: a note, or a root to organize under">New topic</button>
         <button onClick={newItem} title="New Q&A item (Ctrl+Shift+N)">New item</button>
+        <button className={view.kind === "browser" ? "active" : ""} onClick={() => browser()} title="Search, filter and act on everything (Ctrl+Shift+B)">
+          Browser
+        </button>
         <button className={view.kind === "stats" ? "active" : ""} onClick={() => setView({ kind: "stats" })}>Stats</button>
         <button onClick={() => setToolsOpen(true)}>Tools</button>
         <button className="icon" onClick={() => setPaletteOpen(true)} title="Command palette (Ctrl+K)">⌘K</button>
@@ -309,7 +324,16 @@ export default function App() {
       </nav>
       <div className="workspace">
         {sidebarOpen && !focus && stats && (
-          <Sidebar today={stats.today} version={version} openId={currentId} onOpen={open} onReview={review} onChanged={changed} notify={notify} />
+          <Sidebar
+            today={stats.today}
+            version={version}
+            openId={currentId}
+            onOpen={open}
+            onBrowse={browser}
+            onReview={review}
+            onChanged={changed}
+            notify={notify}
+          />
         )}
         <main>
           {view.kind === "learn" && (
@@ -324,6 +348,18 @@ export default function App() {
             />
           )}
           {view.kind === "stats" && <StatsView version={version} />}
+          {view.kind === "browser" && stats && (
+            <BrowserView
+              initialQuery={view.query}
+              today={stats.today}
+              version={version}
+              notify={notify}
+              onOpen={open}
+              onReview={review}
+              onChanged={changed}
+              onReviewBranch={reviewBranch}
+            />
+          )}
           {view.kind === "inbox" && <InboxView version={version} notify={notify} onChanged={changed} onOpen={open} />}
           {view.kind === "browse" && (
             <BrowseView

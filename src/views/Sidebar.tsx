@@ -12,6 +12,8 @@ interface Props {
   /** Element shown in the reader. */
   openId: number | null;
   onOpen: (id: number) => void;
+  /** Open the element browser with a search. */
+  onBrowse: (query: string) => void;
   onReview: (label: string, entries: Promise<import("../api").QueueEntry[]>) => void;
   onChanged: () => void;
   notify: Notify;
@@ -42,7 +44,7 @@ const isTyping = (t: EventTarget | null) => t instanceof HTMLElement && (t.isCon
  * Click opens; Ctrl+click toggles; Shift+click selects a range. Right-click
  * for actions, drag to reorganize, arrow keys to move.
  */
-export function Sidebar({ today, version, openId, onOpen, onReview, onChanged, notify }: Props) {
+export function Sidebar({ today, version, openId, onOpen, onBrowse, onReview, onChanged, notify }: Props) {
   const [nodes, setNodes] = useState<TreeNode[]>([]);
   const [query, setQuery] = useState("");
   const [matches, setMatches] = useState<Set<number> | null>(null);
@@ -362,6 +364,7 @@ export function Sidebar({ today, version, openId, onOpen, onReview, onChanged, n
     const n = ids.length > 1 ? ` (${ids.length})` : "";
     return [
       ...(one ? [{ label: "Open", onClick: () => onOpen(one.id), hint: "Enter" } as MenuEntry] : []),
+      { label: `Show descendants in the browser${n}`, onClick: () => onBrowse(`under:${roots(ids).join(",")}`) },
       { label: `Review branch${n}`, onClick: () => review(ids, false) },
       { label: `Review branch, due only${n}`, onClick: () => review(ids, true) },
       "separator",
@@ -471,7 +474,7 @@ export function Sidebar({ today, version, openId, onOpen, onReview, onChanged, n
     const onKey = (ev: KeyboardEvent) => {
       if (!ev.key.startsWith("Arrow") || ev.defaultPrevented || isTyping(ev.target)) return;
       const t = ev.target as HTMLElement | null;
-      if (t?.closest?.(".sidebar, .modal-backdrop, .context-menu, .pdf-scroller")) return;
+      if (t?.closest?.(".sidebar, .modal-backdrop, .context-menu, .pdf-scroller, .browser")) return;
       if (document.querySelector(".modal-backdrop")) return;
       if (navRef.current(ev)) ev.preventDefault();
     };

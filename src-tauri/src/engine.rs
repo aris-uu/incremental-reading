@@ -1777,6 +1777,85 @@ pub fn export_items(conn: &Connection, roots: Option<&[i64]>) -> Result<Vec<Expo
     Ok(out)
 }
 
+/// One row of the element browser: everything the table can show, filter or sort by.
+#[derive(Serialize, Debug)]
+pub struct BrowseRow {
+    pub id: i64,
+    pub parent_id: Option<i64>,
+    pub kind: String,
+    /// cloze, qa, occlusion; or text, pdf, video, note for topics.
+    pub subtype: String,
+    pub title: String,
+    pub priority: f64,
+    /// Position in the global priority queue.
+    pub prank: f64,
+    pub status: String,
+    pub due_day: Option<i64>,
+    pub interval_days: Option<i64>,
+    pub last_day: Option<i64>,
+    pub reps: i64,
+    pub lapses: i64,
+    pub stability: Option<f64>,
+    pub text_len: i64,
+    pub children: i64,
+    pub pinned: bool,
+    pub needs_work: bool,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// Every element (inbox included) for the browser; filtering happens in the UI.
+pub fn browse_rows(conn: &Connection) -> Result<Vec<BrowseRow>> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT e.id, e.parent_id, e.kind,
+                    CASE WHEN i.element_id IS NOT NULL THEN i.item_type
+                         WHEN t.pdf_asset IS NOT NULL THEN 'pdf'
+                         WHEN t.video_id IS NOT NULL THEN 'video'
+                         WHEN t.text_len = 0 THEN 'note' ELSE 'text' END,
+                    e.title, e.priority, e.prank, e.status,
+                    COALESCE(t.due_day, i.due_day), COALESCE(t.interval_days, i.interval_days), COALESCE(t.last_day, i.last_day),
+                    COALESCE(i.reps, (SELECT COUNT(*) FROM review_log l WHERE l.element_id = e.id AND l.kind = 'read')),
+                    COALESCE(i.lapses, 0), i.stability, COALESCE(t.text_len, 0),
+                    (SELECT COUNT(*) FROM element c WHERE c.parent_id = e.id),
+                    e.pinned != 0, e.needs_work != 0, e.created_at, e.updated_at
+             FROM element e
+             LEFT JOIN topic t ON t.element_id = e.id
+             LEFT JOIN item  i ON i.element_id = e.id
+             ORDER BY e.prank, e.id",
+        )
+        .map_err(e)?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(BrowseRow {
+                id: r.get(0)?,
+                parent_id: r.get(1)?,
+                kind: r.get(2)?,
+                subtype: r.get(3)?,
+                title: r.get(4)?,
+                priority: r.get(5)?,
+                prank: r.get(6)?,
+                status: r.get(7)?,
+                due_day: r.get(8)?,
+                interval_days: r.get(9)?,
+                last_day: r.get(10)?,
+                reps: r.get(11)?,
+                lapses: r.get(12)?,
+                stability: r.get(13)?,
+                text_len: r.get(14)?,
+                children: r.get(15)?,
+                pinned: r.get(16)?,
+                needs_work: r.get(17)?,
+                created_at: r.get(18)?,
+                updated_at: r.get(19)?,
+            })
+        })
+        .map_err(e)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(e);
+    rows
+}
+
 pub fn tree(conn: &Connection) -> Result<Vec<TreeNode>> {
     let mut stmt = conn
         .prepare(
@@ -2452,5 +2531,20 @@ mod tests {
         assert!(tree(&c).unwrap().iter().find(|n| n.id == clip).unwrap().video);
         let plain = import(&c, "Plain", 50.0, 100);
         assert!(create_clip(&c, plain, "", 0.0, 5.0, EMPTY_DOC, 100).is_err());
+    }
+
+    #[test]
+    fn browse_rows_describe_elements() {
+        let c = db::open_in_memory().unwrap();
+        let src = import(&c, "Src", 10.0, 100);
+        topic_read(&c, src, 100).unwrap();
+        let it = item(&c, src, "q [...]", 100);
+        let rows = browse_rows(&c).unwrap();
+        let s = rows.iter().find(|r| r.id == src).unwrap();
+        assert_eq!((s.subtype.as_str(), s.reps, s.children), ("text", 1, 1));
+        let i = rows.iter().find(|r| r.id == it).unwrap();
+        assert_eq!((i.subtype.as_str(), i.parent_id), ("cloze", Some(src)));
+        // Queue order: the child follows its parent.
+        assert!(rows.iter().position(|r| r.id == src) < rows.iter().position(|r| r.id == it));
     }
 }

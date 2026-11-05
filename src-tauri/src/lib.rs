@@ -380,6 +380,11 @@ fn set_video_pos(state: State<AppState>, id: i64, pos: f64) -> Result<()> {
 }
 
 #[tauri::command]
+fn browse_rows(state: State<AppState>) -> Result<Vec<engine::BrowseRow>> {
+    with(&state, engine::browse_rows)
+}
+
+#[tauri::command]
 fn set_flag(state: State<AppState>, id: i64, flag: String, value: bool) -> Result<()> {
     with(&state, |c| engine::set_flag(c, id, &flag, value))
 }
@@ -496,6 +501,7 @@ pub fn run() {
             backup,
             data_dir,
             set_flag,
+            browse_rows,
             create_clip,
             set_video_pos,
             session_summary,
