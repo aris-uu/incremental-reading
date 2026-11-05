@@ -4,6 +4,7 @@ import { api, fmtDays, LEECH_LAPSES, type ElementFull } from "../api";
 import { RichField } from "../editor/RichField";
 import { ElementHeader } from "./ElementHeader";
 import { lintItem } from "../lint";
+import { SentenceCard } from "./SentenceCard";
 import { isDefaultAction } from "../keys";
 import { loadPrefs } from "../prefs";
 import { parseDoc } from "../editor/extensions";
@@ -274,6 +275,28 @@ export function ItemView({ element, mode, onFinish, onOpen, onChanged, onDelete,
           {needsWork && <span className="chip warn">needs work</span>}
         </div>
       )}
+      {item.item_type === "sentence" && (
+        <SentenceCard
+          id={element.id}
+          fields={(() => {
+            try {
+              return JSON.parse(item.fields_json ?? "{}");
+            } catch {
+              return {};
+            }
+          })()}
+          shown={shown}
+          editable={mode === "browse" || shown}
+          notify={notify}
+          onSaved={() => onChanged?.()}
+        />
+      )}
+      {item.item_type === "sentence" && !shown && (
+        <button className="reveal" onClick={() => setShown(true)}>
+          Show answer <kbd>Space</kbd>
+        </button>
+      )}
+      {item.item_type !== "sentence" && (
       <div className="card" ref={cardRef}>
         <div className="card-label">Question</div>
         <RichField className="card-q" docJson={item.question} onChange={edited("q")} placeholder="Question…" />
@@ -301,6 +324,14 @@ export function ItemView({ element, mode, onFinish, onOpen, onChanged, onDelete,
           {` · interval ${fmtDays(item.interval_days)}`}
         </div>
       </div>
+      )}
+      {item.item_type === "sentence" && (
+        <div className="muted small card-meta pad-x">
+          {item.reps === 0 ? "new" : `reps ${item.reps} · lapses ${item.lapses}`}
+          {item.stability != null && ` · stability ${item.stability.toFixed(1)}d`}
+          {` · interval ${fmtDays(item.interval_days)}`}
+        </div>
+      )}
       <footer className="actions">
         {shown && active &&
           GRADES.filter(({ g }) => !twoButton || g === 1 || g === 3).map(({ g, label }) => (

@@ -13,6 +13,8 @@ import { PdfView } from "./PdfView";
 import { VideoPanel, type VideoHandle } from "./VideoPanel";
 import { OcclusionDialog } from "./OcclusionDialog";
 import { AFactor } from "./AFactor";
+import { MineDialog } from "./MineDialog";
+import { renderField, sentenceAround, yomitanFields } from "../japanese";
 import { timeFromHref } from "../youtube";
 
 export type TopicOutcome = "next" | "later" | "done" | "dismiss" | "rescheduled" | "restored";
@@ -93,6 +95,10 @@ function TextTopicView({ element, mode, onFinish, onOpen, onChanged, onDelete, o
   /** For the time-per-read statistics. */
   const openedAt = useRef(Date.now());
   const isVideo = !!topic.video_id;
+  /** Sentence being mined (Alt+S). */
+  const [mining, setMining] = useState<{ sentence: string; start: number; end: number } | null>(null);
+  /** Dictionary popup (Alt+D). */
+  const [lookup, setLookup] = useState<{ top: number; left: number; html: string } | null>(null);
   /** Image being occluded (stored src). */
   const [occluding, setOccluding] = useState<string | null>(null);
   /** Consecutive clozes: one quiet counter instead of a toast each. */
@@ -375,6 +381,41 @@ function TextTopicView({ element, mode, onFinish, onOpen, onChanged, onDelete, o
     [],
   );
 
+  /** The selection's sentence within its paragraph. */
+  const selectedSentence = useCallback(() => {
+    if (!editor) return null;
+    const { from, to, empty, $from, $to } = editor.state.selection;
+    if (empty || !$from.sameParent($to) || !$from.parent.isTextblock) return null;
+    const start = $from.start();
+    const text = editor.state.doc.textBetween(start, $from.end(), "", "\ufffc");
+    return sentenceAround(text, from - start, to - start);
+  }, [editor]);
+
+  /** Alt+S: sentence card for the selected word. */
+  const mine = useCallback(() => {
+    const s = selectedSentence();
+    if (!s) return notify("Select the target word (inside one paragraph), then Alt+S");
+    setMining(s);
+  }, [notify, selectedSentence]);
+
+  /** Alt+D: look the selection up in Yomitan (through its API). */
+  const lookUp = useCallback(async () => {
+    if (!editor || editor.state.selection.empty || !readerRef.current) return notify("Select a word to look up");
+    const { from, to } = editor.state.selection;
+    const word = editor.state.doc.textBetween(from, to, " ");
+    const a = editor.view.coordsAtPos(to);
+    const box = readerRef.current.getBoundingClientRect();
+    const pos = { top: a.bottom - box.top + readerRef.current.scrollTop + 6, left: Math.max(8, Math.min(a.left - box.left, box.width - 420)) };
+    setLookup({ ...pos, html: "<p class='muted'>Looking up…</p>" });
+    try {
+      const f = await yomitanFields(word);
+      const head = f ? `<div class="sc-word">${f.reading && f.reading !== f.word ? `<ruby>${f.word}<rt>${f.reading}</rt></ruby>` : f.word ?? ""}</div>` : "";
+      setLookup({ ...pos, html: f ? renderField(head + (f.pitchAccents ?? "") + (f.definition || f.glossary || "")) : "<p class='muted'>Nothing found (is the Yomitan API on? Tools → Japanese)</p>" });
+    } catch (e) {
+      setLookup({ ...pos, html: `<p class='muted'>Yomitan API not reachable: ${String(e).replace(/</g, "&lt;")}</p>` });
+    }
+  }, [editor, notify]);
+
   const ignore = useCallback(() => {
     if (!editor || editor.state.selection.empty) return;
     editor.chain().toggleMark("ignore").run();
@@ -447,6 +488,9 @@ function TextTopicView({ element, mode, onFinish, onOpen, onChanged, onDelete, o
       if (ev.altKey && k === "a") return run(addQa);
       if (ev.altKey && k === "i") return run(ignore);
       if (ev.altKey && k === "o") return run(occlude);
+      if (ev.altKey && k === "s") return run(mine);
+      if (ev.altKey && k === "d") return run(lookUp);
+      if (ev.key === "Escape" && lookup) return run(() => setLookup(null));
       if (ev.altKey && ev.key === "\\") return run(deleteBefore);
       if ((ev.altKey && k === "r") || (ev.ctrlKey && ev.key === "F7")) return run(() => editor && setReadPoint(editor));
       // Esc leaves the text, so Space works as Next again.
@@ -461,7 +505,7 @@ function TextTopicView({ element, mode, onFinish, onOpen, onChanged, onDelete, o
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [active, addQa, askReschedule, cloze, deleteBefore, editor, extract, finish, ignore, mode, occlude, selBox, setReadPoint]);
+  }, [active, addQa, askReschedule, cloze, deleteBefore, editor, extract, finish, ignore, lookUp, lookup, mine, mode, occlude, selBox, setReadPoint]);
 
   return (
     <div className="element-view">
@@ -524,6 +568,12 @@ function TextTopicView({ element, mode, onFinish, onOpen, onChanged, onDelete, o
         }}
         onMouseLeave={() => ((peekTarget.current = null), setPeek(null))}
       >
+        {lookup && (
+          <div className="lookup-pop" style={{ top: lookup.top, left: lookup.left }} onMouseDown={(e) => e.stopPropagation()}>
+            <button className="small-btn lookup-close" onClick={() => setLookup(null)}>×</button>
+            <div dangerouslySetInnerHTML={{ __html: lookup.html }} />
+          </div>
+        )}
         {peek && (
           <div className="peek small" style={{ top: peek.top, left: peek.left }}>
             {peek.text}
@@ -536,6 +586,8 @@ function TextTopicView({ element, mode, onFinish, onOpen, onChanged, onDelete, o
             <button onClick={addQa}>Q&amp;A <kbd>Alt+A</kbd></button>
             <button onClick={ignore}>Ignore</button>
             {selectedImage() && <button onClick={occlude}>Occlude <kbd>Alt+O</kbd></button>}
+            <button onClick={mine} title="Sentence card with this word as the target">Sentence <kbd>Alt+S</kbd></button>
+            <button onClick={() => void lookUp()} title="Look up in Yomitan">Look up <kbd>Alt+D</kbd></button>
             <button onClick={() => editor && setReadPoint(editor)} title="Read point here">◆</button>
           </div>
         )}
@@ -543,6 +595,23 @@ function TextTopicView({ element, mode, onFinish, onOpen, onChanged, onDelete, o
       </div>
       {isVideo && editor?.isEmpty && (
         <p className="muted small pad">No transcript. Watch, mark a start and an end to make clips, or paste a transcript here.</p>
+      )}
+      {mining && (
+        <MineDialog
+          {...mining}
+          sourceId={id}
+          sourceTitle={element.title}
+          notify={notify}
+          onClose={() => setMining(null)}
+          onCreated={(itemId) => {
+            setMining(null);
+            if (editor) {
+              const { from, to } = editor.state.selection;
+              editor.chain().setTextSelection({ from, to }).setMark("cloze", { id: itemId }).setTextSelection(to).run();
+            }
+            onChanged?.();
+          }}
+        />
       )}
       {occluding && (
         <OcclusionDialog

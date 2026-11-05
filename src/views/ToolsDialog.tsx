@@ -5,7 +5,7 @@ import { exportToAnki } from "../ankiExport";
 import { loadPrefs, savePrefs, type Prefs } from "../prefs";
 import { DEFAULT_APPEARANCE, FONTS, THEMES, loadAppearance, saveAppearance, type Appearance } from "../appearance";
 
-type Tab = "overload" | "settings" | "appearance" | "extension" | "backup";
+type Tab = "overload" | "settings" | "appearance" | "japanese" | "extension" | "backup";
 
 interface Props {
   /** Element selected in the sidebar/reader, offered as the subset for postpone and mercy. */
@@ -28,9 +28,9 @@ export function ToolsDialog({ branch, onClose, onChanged, notify }: Props) {
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="modal">
         <div className="modal-tabs">
-          {(["overload", "settings", "appearance", "extension", "backup"] as Tab[]).map((t) => (
+          {(["overload", "settings", "appearance", "japanese", "extension", "backup"] as Tab[]).map((t) => (
             <button key={t} className={tab === t ? "active" : ""} onClick={() => setTab(t)}>
-              {{ overload: "Postpone & Mercy", settings: "Scheduling", appearance: "Appearance", extension: "Browser extension", backup: "Backup & export" }[t]}
+              {{ overload: "Postpone & Mercy", settings: "Scheduling", appearance: "Appearance", japanese: "Japanese & Yomitan", extension: "Browser extension", backup: "Backup & export" }[t]}
             </button>
           ))}
           <span className="spacer" />
@@ -46,6 +46,7 @@ export function ToolsDialog({ branch, onClose, onChanged, notify }: Props) {
           )}
           {tab === "appearance" && <AppearanceTab />}
           {tab === "extension" && <ExtensionTab />}
+          {tab === "japanese" && <JapaneseTab notify={notify} />}
           {tab === "backup" && <BackupTab notify={notify} />}
         </div>
       </div>
@@ -435,6 +436,104 @@ function ReviewPrefs() {
         Both key sets share SuperMemo's Alt+X extract, Alt+Z cloze, Alt+P priority, Ctrl+J reschedule, Ctrl+Shift+Enter Done!.
       </p>
     </>
+  );
+}
+
+function JapaneseTab({ notify }: { notify: Notify }) {
+  const [p, setP] = useState<Prefs>(loadPrefs);
+  const [ac, setAc] = useState<{ port: number; key: string | null } | null>(null);
+  const [test, setTest] = useState("");
+  useEffect(() => {
+    api.getAnkiconnect().then(setAc);
+  }, []);
+  const set = (patch: Partial<Prefs>) => {
+    const next = { ...p, ...patch };
+    setP(next);
+    savePrefs(next);
+  };
+  return (
+    <div className="tools">
+      <h3>Yomitan → this app (AnkiConnect)</h3>
+      <p className="muted small">
+        The app answers Yomitan's “Add to Anki” the way AnkiConnect does. Mined notes become sentence cards; decks become topics. In Yomitan:
+        Settings → Anki → AnkiConnect server address <code>http://127.0.0.1:{ac?.port || 8766}</code>, then pick note type <b>Senren</b> (the same
+        field names as the Senren note type, so its recommended Yomitan field setup works as is). mpvacious and ShareX scripts work the same way.
+        Use port 8765 only if Anki itself isn't running.
+      </p>
+      {ac && (
+        <div className="form-grid">
+          <label>
+            port
+            <input type="number" min={0} max={65535} value={ac.port} onChange={(e) => setAc({ ...ac, port: Number(e.target.value) })} />
+            <span className="muted small">0 = off</span>
+          </label>
+          <label>
+            API key
+            <input value={ac.key ?? ""} placeholder="optional; set the same in Yomitan" onChange={(e) => setAc({ ...ac, key: e.target.value })} />
+          </label>
+        </div>
+      )}
+      <div className="row-actions">
+        <span className="muted small">Changes apply when the app restarts.</span>
+        <button disabled={!ac} onClick={() => ac && api.setAnkiconnect(ac.port, ac.key).then(() => notify("Saved: restart the app to apply"))}>Save</button>
+      </div>
+
+      <h3>This app → Yomitan (reading inside the app)</h3>
+      <p className="muted small">
+        Browser extensions don't run inside the app, so lookups go through the Yomitan API (<code>yomitan-api</code>: install it, then enable
+        “Yomitan API” in Yomitan's advanced settings). Select a word: <kbd>Alt+D</kbd> looks it up, <kbd>Alt+S</kbd> makes a sentence card with it
+        highlighted and the gloss, reading, audio, pitch accent and frequency filled in from your dictionaries.
+      </p>
+      <div className="form-grid">
+        <label>
+          address
+          <input value={p.yomitanUrl} placeholder="http://127.0.0.1:19633 (empty = off)" onChange={(e) => set({ yomitanUrl: e.target.value.trim() })} />
+          <button
+            className="small-btn"
+            onClick={() =>
+              import("../japanese")
+                .then((m) => m.testYomitan(p.yomitanUrl))
+                .then((v) => setTest(`Connected (version ${v})`))
+                .catch((e) => setTest(`Not reachable: ${e}`))
+            }
+          >
+            Test
+          </button>
+        </label>
+        <label>
+          definition marker
+          <input value={p.definitionMarker} placeholder="e.g. single-glossary-jitendexorg-2026-01-04 (optional)" onChange={(e) => set({ definitionMarker: e.target.value })} />
+        </label>
+        <label>
+          mined cards go
+          <select value={p.mineInto} onChange={(e) => set({ mineInto: e.target.value as Prefs["mineInto"] })}>
+            <option value="source">under the article they came from</option>
+            <option value="deck">into a deck (topic path)</option>
+          </select>
+          {p.mineInto === "deck" && <input value={p.mineDeck} onChange={(e) => set({ mineDeck: e.target.value })} />}
+        </label>
+      </div>
+      {test && <p className="small">{test}</p>}
+
+      <h3>Sentence cards</h3>
+      <div className="form-grid">
+        <label>
+          front shows
+          <select value={p.cardType} onChange={(e) => set({ cardType: e.target.value as Prefs["cardType"] })}>
+            <option value="sentence">the sentence, target word highlighted</option>
+            <option value="word">the word only</option>
+            <option value="audio">audio only</option>
+          </select>
+        </label>
+        <label>
+          <input type="checkbox" checked={p.autoplay} onChange={(e) => set({ autoplay: e.target.checked })} /> play audio automatically
+        </label>
+      </div>
+      <p className="muted small">
+        As in Senren, a note's own <code>sentenceCard</code> or <code>audioCard</code> field (any text) overrides the default. New mined cards are
+        placed in the queue by their frequency rank (<code>freqSort</code>): common words first.
+      </p>
+    </div>
   );
 }
 

@@ -59,6 +59,8 @@ export interface ItemData {
   last_day: number | null;
   reps: number;
   lapses: number;
+  /** Sentence items: Senren fields (JSON object). */
+  fields_json: string | null;
 }
 
 export interface ElementFull {
@@ -254,7 +256,7 @@ export const api = {
   fetchPage: (url: string) => invoke<{ html: string; final_url: string }>("fetch_page", { url }),
   createExtract: (parentId: number, title: string, docJson: string) =>
     invoke<number>("create_extract", { parentId, title, docJson }),
-  createItem: (parentId: number | null, itemType: "cloze" | "qa" | "occlusion", question: string, answer: string) =>
+  createItem: (parentId: number | null, itemType: "cloze" | "qa" | "occlusion" | "sentence", question: string, answer: string) =>
     invoke<number>("create_item", { parentId, itemType, question, answer }),
   saveTopic: (id: number, docJson: string, readPoint: number | null) =>
     invoke<void>("save_topic", { id, docJson, readPoint }),
@@ -311,6 +313,14 @@ export const api = {
   extensionInfo: () => invoke<{ port: number; token: string }>("extension_info"),
   backup: () => invoke<string>("backup"),
   dataDir: () => invoke<string>("data_dir"),
+  createSentence: (parentId: number | null, fields: Record<string, string>, tags: string[], priority: number | null) =>
+    invoke<number>("create_sentence", { parentId, fields, tags, priority }),
+  updateSentence: (id: number, fields: Record<string, string>) => invoke<void>("update_sentence", { id, fields }),
+  ensureDeck: (deck: string) => invoke<number | null>("ensure_deck", { deck }),
+  saveMedia: (name: string, base64: string) => invoke<string>("save_media", { name, base64 }),
+  yomitanApi: (base: string, path: string, body: unknown) => invoke<unknown>("yomitan_api", { base, path, body }),
+  getAnkiconnect: () => invoke<{ port: number; key: string | null }>("get_ankiconnect"),
+  setAnkiconnect: (port: number, key: string | null) => invoke<void>("set_ankiconnect", { port, key }),
   setTags: (id: number, tags: string[]) => invoke<void>("set_tags", { id, tags }),
   tagMany: (ids: number[], tag: string, add: boolean) => invoke<void>("tag_many", { ids, tag, add }),
   allTags: () => invoke<[string, number][]>("all_tags"),

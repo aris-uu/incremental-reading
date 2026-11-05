@@ -98,6 +98,11 @@ export default function App() {
   // extension's pages arrive as raw HTML and are converted here.
   useEffect(() => {
     const unChanged = listen(COLLECTION_CHANGED, changed);
+    // guiBrowse / guiEditNote from Yomitan or another AnkiConnect client.
+    const unShow = listen<number[]>("anki-show", ({ payload }) => {
+      if (payload.length === 1) setView({ kind: "browse", id: payload[0] });
+      else setView({ kind: "browser", query: payload.length ? `id:${payload.join(",")}` : "is:sentence" });
+    });
     const unExternal = listen<ExternalImport>("external-import", async ({ payload }) => {
       try {
         // A YouTube page from the browser extension becomes an incremental video.
@@ -134,6 +139,7 @@ export default function App() {
     });
     return () => {
       void unChanged.then((f) => f());
+      void unShow.then((f) => f());
       void unExternal.then((f) => f());
     };
   }, [changed, notify]);

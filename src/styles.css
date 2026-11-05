@@ -543,3 +543,37 @@ button.active { border-color: var(--accent); }
 .toolbar { flex-wrap: wrap; }
 button { white-space: nowrap; }
 .browser-preview .actions { flex-wrap: wrap; }
+
+/* ----- Sentence cards (sentence mining) ----- */
+.sentence-card { font-family: var(--reader-font); }
+.sc-sentence { font-size: calc(var(--reader-size) * 1.45); line-height: 1.7; }
+.sc-sentence.small-sentence { font-size: calc(var(--reader-size) * 1.05); }
+.sc-sentence .highlight, .sc-sentence b, .sc-sentence strong { color: var(--cloze); font-weight: 700; }
+.sc-word { font-size: calc(var(--reader-size) * 1.9); line-height: 1.3; }
+.sc-word.big { font-size: calc(var(--reader-size) * 2.6); text-align: center; }
+.sc-word rt { font-size: 0.45em; color: var(--muted); }
+.sc-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.sc-pitch, .sc-freq { font-size: 13px; font-family: var(--ui-font); }
+.sc-gloss { margin-top: 8px; font-size: calc(var(--reader-size) * 0.95); }
+.sc-gloss ul, .sc-gloss ol { padding-left: 1.3em; margin: 4px 0; }
+.sc-picture img { max-width: 100%; max-height: 40vh; border-radius: 6px; margin-top: 8px; }
+.sc-translation { color: var(--muted); font-style: italic; margin-top: 4px; }
+.sc-source { margin-top: 8px; }
+.sc-play-big { font-size: 20px; padding: 14px 28px; }
+.play { padding: 0 8px; border-radius: 12px; font-size: 12px; }
+.sc-fields { display: grid; gap: 6px; }
+.sc-fields label { display: grid; grid-template-columns: 140px 1fr; gap: 8px; align-items: start; }
+.sc-fields textarea { font: 13px ui-monospace, monospace; width: 100%; color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 4px; }
+.pad-x { padding: 0 24px; }
+.mine-modal { width: min(720px, 96vw); }
+.mine-modal .row { display: flex; gap: 4px; align-items: center; margin: 8px 0; flex-wrap: wrap; }
+.mine-modal textarea { width: 100%; color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 6px; }
+.mine-lookup { border-left: 3px solid var(--border); padding-left: 10px; max-height: 38vh; overflow: auto; }
+.col { display: flex; flex-direction: column; gap: 2px; }
+.lookup-pop {
+  position: absolute; z-index: 9; width: 410px; max-height: 50vh; overflow: auto; padding: 8px 12px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.18);
+  font-family: var(--reader-font); font-size: 15px;
+}
+.lookup-pop .sc-word { font-size: 26px; }
+.lookup-close { float: right; }

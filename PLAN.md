@@ -410,3 +410,45 @@ The aim is more retained knowledge per minute, not more reviews. Each idea below
 3. **The core is in Rust from day one** (rusqlite + the `fsrs` crate).
 4. **Personal tool** with a single user. Onboarding, multi-user features and polish for import edge cases are not priorities.
 5. **AI features come later** (phase 3 at the earliest).
+
+## 10. Japanese: sentence mining
+
+**Current setup:** VN → texthooker → Yomitan → Anki (Senren note type).
+**Goal:** keep Yomitan and its dictionaries, but mine into this collection, where cards sit next to the text they came from and share one priority queue with the reading.
+
+### Built (2026-11-05)
+- **Sentence items** (`item_type = sentence`). They store Senren's fields: `word`, `reading`, `sentence`, `sentenceFurigana`, `sentenceTranslation`, `definition`, `glossary`, `wordAudio`, `sentenceAudio`, `picture`, `pitchAccents`, `frequencies`, `freqSort`, `miscInfo`, …
+  - **Front:** the sentence with the target word highlighted (`<b>` or `span.highlight`, like Senren).
+  - **Back:** the word with furigana, audio buttons, pitch accent, frequencies, the gloss (Senren's order: selection text, then definition, then glossary), picture, translation, notes and source.
+  - Card type follows Senren's `sentenceCard` / `audioCard` flags. The default is set in Tools → Japanese & Yomitan and is "sentence".
+  - Audio plays automatically. Dictionary HTML is sanitised (no scripts, embeds or event handlers).
+- **Yomitan → app (AnkiConnect-compatible server)**, on 127.0.0.1:8766 by default:
+  - Point Yomitan's AnkiConnect address at the app and choose the **Senren** note type. Senren's recommended field markers work unchanged.
+  - Supported actions: `version`, `deckNames`, `modelNames`, `modelFieldNames`, `findNotes` (`deck:`, `word:`, wildcards, `added:N`), `canAddNotes` (duplicate check on `word`), `addNote(s)`, `storeMediaFile`, `notesInfo`, `updateNoteFields`, `guiBrowse`, `guiEditNote`, `multi`, …
+  - Decks become topics (`Japanese::Mining` → nested topics). mpvacious and ShareX scripts can attach screenshots and audio to the last card through `updateNoteFields`.
+  - Requests from websites are refused; browser extensions and local tools are allowed. An optional API key is supported.
+- **App → Yomitan** (reading an EPUB or article inside the app, where extensions can't run): through the **Yomitan API** (`yomitan-api`, `POST /ankiFields`).
+  - Select a word, then press **Alt+D** to look it up in a popup, or **Alt+S** to make a sentence card.
+  - Alt+S finds the sentence around the selection (。！？ and 「」 aware) and highlights the target, which can be widened or narrowed by a character. Yomitan fills in the dictionary form, reading, glossary, audio, pitch and frequency.
+  - The card goes under the article it came from, and the word gets a link mark back to the card. Alternatively it can go into a fixed deck.
+- **Frequency-ordered learning:** `freqSort` (Yomitan's harmonic frequency rank) sets the card's place in the priority queue, so common words come first. Senren's "sort new cards by frequency" happens automatically.
+
+### Workflow
+1. **Sources:**
+   - **EPUB:** import it (chapters become topics), read incrementally with a read point, and mine with Alt+S. Yomitan's own popup isn't available inside the app; Alt+D takes its place.
+   - **VN or browser reading** (texthooker page, ttu-reader, web): keep Yomitan as it is and change only the AnkiConnect address. Cards land in the "Japanese::Mining" topic, or whichever deck you choose in Yomitan.
+   - **YouTube with Japanese subtitles:** the transcript becomes a video topic; mine sentences from it, and a clip extract keeps the audio context.
+   - **Anime:** mpvacious → AnkiConnect → the app.
+2. **Triage:** whole books go to the Inbox; mined cards go straight to the queue (no point in triaging a word you just looked up).
+3. **Review:** Space reveals, Space again means Good, with pass/fail grading as an option. Leech tools, "needs work" and Edit fields apply as for other items. The parent article stays one click away (breadcrumb, and the context drawer on the back).
+4. **Reading load:** use A-Factor and priority to keep a few books "active" and the rest slow. Use "Continue reading" to finish a chapter.
+
+### Ideas (not built)
+- **Known-word tracking:** mark words as known (from mature cards and a frequency list) and colour unknown words in the reader. Then i+1 sentence search: find sentences in your library with exactly one unknown word, and offer them as cards.
+- **In-reader Yomitan-style popup on hover,** using `/termEntries` and `/tokenize` from yomitan-api. Shift+hover would show a definition without selecting.
+- **Furigana toggle** for the reader (from `/tokenize` readings), and per-word furigana in `sentenceFurigana` when mining in the app.
+- **Sentence audio from the source:** for video topics, cut the clip's audio into `sentenceAudio`. For EPUBs, use TTS (optional).
+- **Picture from the source:** for video topics, a frame at the clip start goes into `picture`.
+- **Mining statistics:** words mined per book, retention by frequency band, and a coverage estimate per book (the share of tokens you know).
+- **Export to Anki as Senren notes,** with fields intact, instead of Basic.
+- **Kanji cards** through Yomitan's kanji markers (`type: kanji`).
