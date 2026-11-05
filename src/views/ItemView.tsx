@@ -4,6 +4,7 @@ import { api, fmtDays, LEECH_LAPSES, type ElementFull } from "../api";
 import { RichField } from "../editor/RichField";
 import { ElementHeader } from "./ElementHeader";
 import { lintItem } from "../lint";
+import { isDefaultAction } from "../keys";
 import { parseDoc } from "../editor/extensions";
 
 /** Text of a ProseMirror node (JSON). */
@@ -165,8 +166,14 @@ export function ItemView({ element, mode, onFinish, onOpen, onChanged, onDelete,
     const onKey = (ev: KeyboardEvent) => {
       if (ev.ctrlKey && ev.key.toLowerCase() === "j") return ev.preventDefault(), askReschedule();
       if (ev.altKey && ev.key.toLowerCase() === "w") return ev.preventDefault(), void toggleNeedsWork();
+      // Space: show the answer, then grade Good.
+      if (isDefaultAction(ev)) {
+        if (!shown) setShown(true);
+        else if (canGrade) void grade(3);
+        return;
+      }
       if (isTyping(ev.target) || ev.ctrlKey || ev.altKey || ev.metaKey) return;
-      if (!shown && (ev.key === " " || ev.key === "Enter")) {
+      if (!shown && ev.key === "Enter") {
         ev.preventDefault();
         setShown(true);
       } else if (shown && canGrade && ["1", "2", "3", "4"].includes(ev.key)) {
@@ -231,6 +238,7 @@ export function ItemView({ element, mode, onFinish, onOpen, onChanged, onDelete,
               onClick={() => grade(g)}
             >
               {label}
+              {g === 3 && <kbd className="space-hint">Space</kbd>}
               <small>{preview ? fmtDays(preview[g - 1]) : ""}</small>
               <kbd>{g}</kbd>
             </button>

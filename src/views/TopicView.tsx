@@ -3,6 +3,7 @@ import type { Notify } from "../notify";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import type { EditorState } from "@tiptap/pm/state";
 import { NodeSelection } from "@tiptap/pm/state";
+import { isDefaultAction } from "../keys";
 import { api, fmtDays, fmtTime, type ElementFull } from "../api";
 import { EMPTY_DOC, extensions, parseDoc, readPointKey, stripIrMarks, textDoc } from "../editor/extensions";
 import { ElementHeader } from "./ElementHeader";
@@ -404,14 +405,18 @@ function TextTopicView({ element, mode, onFinish, onOpen, onChanged, onDelete, o
       if (ev.altKey && k === "o") return run(occlude);
       if (ev.altKey && ev.key === "\\") return run(deleteBefore);
       if ((ev.altKey && k === "r") || (ev.ctrlKey && ev.key === "F7")) return run(() => editor && setReadPoint(editor));
+      // Esc leaves the text, so Space works as Next again.
+      if (ev.key === "Escape" && editor?.isFocused && !selBox) return run(() => editor.commands.blur());
       if (!active) return;
+      // Space: Next (in the queue only; while browsing it would mark the topic read by accident).
+      if (mode === "learn" && isDefaultAction(ev)) return void finish("next");
       if (ev.ctrlKey && ev.shiftKey && k === "enter") return run(() => finish("done"));
       if (ev.ctrlKey && k === "enter") return run(() => finish("next"));
       if (ev.ctrlKey && k === "j") return run(askReschedule);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [active, addQa, askReschedule, cloze, deleteBefore, editor, extract, finish, ignore, occlude, setReadPoint]);
+  }, [active, addQa, askReschedule, cloze, deleteBefore, editor, extract, finish, ignore, mode, occlude, selBox, setReadPoint]);
 
   return (
     <div className="element-view">
@@ -497,8 +502,8 @@ function TextTopicView({ element, mode, onFinish, onOpen, onChanged, onDelete, o
       <footer className="actions">
         {active && (
           <>
-            <button className="primary" disabled={busy} onClick={() => finish("next")} title="Ctrl+Enter">
-              {mode === "learn" ? "Next" : "Mark read"}
+            <button className="primary" disabled={busy} onClick={() => finish("next")} title="Space or Ctrl+Enter">
+              {mode === "learn" ? (<>Next <kbd>Space</kbd></>) : "Mark read"}
             </button>
             {mode === "learn" && <button disabled={busy} onClick={() => finish("later")}>Later today</button>}
           </>

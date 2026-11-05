@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as pdfjs from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import "pdfjs-dist/web/pdf_viewer.css";
+import { isDefaultAction } from "../keys";
 import { api, fmtDays, type PdfMark } from "../api";
 import { textDoc, toDisplaySrc } from "../editor/extensions";
 import { ElementHeader } from "./ElementHeader";
@@ -348,6 +349,8 @@ export function PdfView({ element, mode, onFinish, onOpen, onChanged, onDelete, 
       if (ev.ctrlKey && (ev.key === "=" || ev.key === "+")) return run(() => zoom(1.15));
       if (ev.ctrlKey && ev.key === "-") return run(() => zoom(1 / 1.15));
       if (!active) return;
+      // Space: Next (in the queue only; while browsing it would mark the topic read by accident).
+      if (mode === "learn" && isDefaultAction(ev)) return void finish("next");
       if (ev.ctrlKey && ev.shiftKey && k === "enter") return run(() => finish("done"));
       if (ev.ctrlKey && k === "enter") return run(() => finish("next"));
       if (ev.ctrlKey && k === "j") return run(askReschedule);
@@ -394,8 +397,8 @@ export function PdfView({ element, mode, onFinish, onOpen, onChanged, onDelete, 
       <footer className="actions">
         {active && (
           <>
-            <button className="primary" disabled={busy} onClick={() => finish("next")} title="Ctrl+Enter">
-              {mode === "learn" ? "Next" : "Mark read"}
+            <button className="primary" disabled={busy} onClick={() => finish("next")} title="Space or Ctrl+Enter">
+              {mode === "learn" ? (<>Next <kbd>Space</kbd></>) : "Mark read"}
             </button>
             {mode === "learn" && <button disabled={busy} onClick={() => finish("later")}>Later today</button>}
           </>
